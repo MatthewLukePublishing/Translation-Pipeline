@@ -1,0 +1,94 @@
+# Dependencies and package-manager artifacts
+node_modules/
+.npm/
+
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+secrets*.json
+
+# Logs, caches, temporary files, and recoverable transaction state
+*.log
+*.tmp
+*.temp
+*.bak
+*.backup
+*.journal.json
+*.transaction.json
+*.lock.json
+logs/
+reports/
+state/
+debug_payloads/
+subscription_state/
+.cache/
+.tmp/
+tmp/
+temp/
+coverage/
+
+# Private project governance and historical material
+/_Archive/
+/PROJECT.md
+/Future Languages.txt
+
+# Private glossary sources and generated runtime data
+/01 Translate Glossaries/book_glossary_map.json
+/01 Translate Glossaries/*/Glossary.xlsx
+/01 Translate Glossaries/*/Runtime/
+/01 Translate Glossaries/*/README.md
+
+# Private book inputs, job state, and production references
+/02 Translate Text/Active Job.json
+/02 Translate Text/Origin Files/
+/02 Translate Text/Language Files/
+/02 Translate Text/Jobs/
+/02 Translate Text/Book Instructions/*.json
+/02 Translate Text/Reference/
+
+# Proprietary Adobe inputs and generated diagram/caption outputs
+/03 Translate Diagrams/Reference/
+/03 Translate Diagrams/Working Files/
+/03 Translate Diagrams/Output/
+/04 Translate Comic Captions/Working Files/
+/04 Translate Comic Captions/Output/
+
+# Private data-contract audit (the public suite uses synthetic fixtures)
+/Tests/DataContracts.test.cjs
+/Tests/Run-Tests.ps1
+
+# Input/output document and publishing formats
+*.xlsx
+*.xlsm
+*.xlsb
+*.xls
+*.csv
+*.tsv
+*.zip
+*.7z
+*.rar
+*.indd
+*.idml
+*.icml
+*.ai
+*.ait
+*.eps
+*.psd
+*.pdf
+*.docx
+*.doc
+
+# Operating system and editor files
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+*.swp
+

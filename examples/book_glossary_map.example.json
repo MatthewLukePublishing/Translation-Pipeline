@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "glossaryContractVersion": 2,
+  "sheets": {
+    "acronyms": "Acronyms",
+    "words": "Words"
+  },
+  "columns": [
+    "English",
+    "English Definition",
+    "French",
+    "French Definition"
+  ],
+  "profiles": {
+    "French": {
+      "language": "French",
+      "termKey": "French",
+      "definitionKey": "French Definition"
+    }
+  },
+  "books": {
+    "DEMO": {
+      "family": "Demo",
+      "productInteriorsRoot": "C:/Publishing/Products/Demo Book/Interiors",
+      "translationInstructions": "02 Translate Text/Book Instructions/DEMO.json",
+      "authoringWorkbook": "01 Translate Glossaries/Demo/Glossary.xlsx",
+      "runtime": {
+        "acronyms": "01 Translate Glossaries/Demo/Runtime/acronyms.json",
+        "words": "01 Translate Glossaries/Demo/Runtime/words.json"
+      },
+      "originWorkbook": "02 Translate Text/Origin Files/DEMO content_export.xlsx",
+      "originArchive": "02 Translate Text/Origin Files/DEMO Text with IDs.zip",
+      "originDocument": "02 Translate Text/Origin Files/DEMO English Standard.indd",
+      "originDiagrams": "C:/Publishing/Products/Demo Book/Interiors/English/Diagrams",
+      "supportedProfiles": [
+        "French"
+      ],
+      "defaultProfiles": {
+        "French": "French"
+      }
+    }
+  }
+}
+

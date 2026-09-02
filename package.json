@@ -1,0 +1,33 @@
+{
+  "name": "translation-pipeline",
+  "version": "1.0.0",
+  "description": "A recoverable, auditable publishing translation pipeline for glossary, ICML, diagram, and caption workflows.",
+  "license": "MIT",
+  "private": false,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "pwsh -NoLogo -NoProfile -File ./Tests/Run-Public-Tests.ps1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MatthewLukePublishing/translation-pipeline.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MatthewLukePublishing/translation-pipeline/issues"
+  },
+  "homepage": "https://github.com/MatthewLukePublishing/translation-pipeline#readme",
+  "dependencies": {
+    "adm-zip": "0.6.0",
+    "exceljs": "4.4.0",
+    "fast-glob": "3.3.3",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  },
+  "overrides": {
+    "exceljs": {
+      "uuid": "11.1.1"
+    }
+  }
+}

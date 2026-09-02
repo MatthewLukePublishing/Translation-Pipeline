@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 2,
+  "moduleId": "DEMO",
+  "book": "DEMO",
+  "title": "Demonstration Book",
+  "baseRules": {
+    "priority": "mandatory",
+    "promptInstructions": [
+      "Preserve the product name ExampleMark exactly."
+    ],
+    "glossarySourceTermExclusions": [],
+    "glossaryTableSourceTermExclusions": [],
+    "preserveSourcePatterns": [
+      {
+        "id": "product_name",
+        "pattern": "\\bExampleMark\\b",
+        "flags": "gu"
+      }
+    ]
+  },
+  "languageExceptions": {
+    "French": {
+      "promptInstructions": [
+        "Use French guillemets for editorial quotations."
+      ],
+      "forbiddenTargetPatterns": []
+    }
+  }
+}
+

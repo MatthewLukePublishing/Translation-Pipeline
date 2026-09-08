@@ -583,6 +583,7 @@ function Invoke-ProductionFinalize {
         -not ([string]$_.language).Equals([string]$job.Config.targetLanguage, [StringComparison]::OrdinalIgnoreCase)
     })
     if ($overflowCount -ne 0) { throw "Layout finalization found $overflowCount overset stories. Adjust only the affected style families, then rerun Finalize." }
+    if ([string]$audit.tableAudit.status -ne 'complete' -or [int]$audit.overflow.cellCount -ne 0) { throw 'Layout finalization requires a complete table-cell audit without clipped text.' }
     if ($missingLinkCount -ne 0 -or $outdatedLinkCount -ne 0) {
         throw "Layout finalization found $missingLinkCount missing and $outdatedLinkCount outdated links. Relink local Text/Diagrams assets, then rerun Finalize."
     }
@@ -596,6 +597,7 @@ function Invoke-ProductionFinalize {
         auditReport = $auditReportPath
         auditSha256 = (Get-FileHash -LiteralPath $auditReportPath -Algorithm SHA256).Hash
         overflowStories = 0
+        overflowCells = 0
         languageMismatchStyles = 0
         missingLinks = 0
         outdatedLinks = 0
@@ -703,6 +705,7 @@ function Complete-ProductionJob {
     Assert-ProductionCompletionEvidence -Manifest $manifest -DocumentPath $documentPath -LayoutAuditPath $layoutAuditPath -WorkbookPath (Join-Path $job.JobPath 'output\content_import.xlsx')
     $layoutAudit = Read-JsonFile -Path $layoutAuditPath -Label 'final layout audit'
     if ([int]$layoutAudit.overflow.storyCount -ne 0) { throw 'The final layout audit contains overset stories.' }
+    if ([string]$layoutAudit.tableAudit.status -ne 'complete' -or [int]$layoutAudit.overflow.cellCount -ne 0) { throw 'The final layout audit must completely check table cells without clipped text.' }
     if ([int]$layoutAudit.linkStatus.missing -ne 0 -or [int]$layoutAudit.linkStatus.outdated -ne 0) {
         throw 'The final layout audit contains missing or outdated links.'
     }

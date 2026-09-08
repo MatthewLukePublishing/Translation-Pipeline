@@ -20,6 +20,7 @@ import { buildContentGroups } from "./ContentGroups.mjs";
 import { lockLineBreaks, restoreLockedLineBreaks, restoreLineBreakKinds } from "./LineBreaks.mjs";
 import { validateWithTargetedRecheck } from "./BatchRecheck.mjs";
 import { glossaryPattern } from "./GlossaryPatterns.mjs";
+import { renderGlossaryTableRow } from "./GlossaryTable.mjs";
 import { applyLanguagePostprocessors } from "./LanguagePostprocessors.mjs";
 import {
   compileGlossaryEntries,
@@ -338,7 +339,7 @@ function applyGlossaryTableContract(sourceValues, outputValues, glossaryTableMap
     const englishDefinition = sourceSegment.slice(tab + 1).trim();
     const selected = glossaryTableMap.get(`${sourceTerm}\u0000${englishDefinition}`);
     if (!selected) continue;
-    outputValues[row][COL_D] = `${selected.targetTerm}\t${selected.targetDefinition}`;
+    outputValues[row][COL_D] = renderGlossaryTableRow(sourceSegment, selected);
     standardizedGlossaryTableRows += 1;
   }
 }

@@ -12,3 +12,14 @@ export function glossaryPattern(value, options = {}) {
   const flags = caseSensitive ? "gu" : "giu";
   return new RegExp(`${left}${escaped}${right}`, flags);
 }
+
+// Source matching and explicit abbreviations stay exact. In French prose,
+// a one-word definition ending in -é may take regular gender/number agreement.
+// This is a terminology-presence check, not a substitute for grammatical review.
+export function containsGlossaryTarget(text, check, targetLanguage) {
+  if (glossaryPattern(check.target).test(String(text ?? ""))) return true;
+  if (!/^French$/i.test(String(targetLanguage)) || check.kind !== "definition"
+      || !/^[\p{L}\p{M}]+é$/u.test(check.target)) return false;
+  return ["e", "s", "es"].some(ending =>
+    glossaryPattern(`${check.target}${ending}`).test(String(text ?? "")));
+}

@@ -14,7 +14,8 @@ import {
   countExactOccurrences,
   loadBookTranslationInstructionSnapshot,
 } from "../BookTranslationRules.mjs";
-import { glossaryPattern } from "../GlossaryPatterns.mjs";
+import { containsGlossaryTarget } from "../GlossaryPatterns.mjs";
+import { renderGlossaryTableRow } from "../GlossaryTable.mjs";
 import { compileGlossaryEntries, resolveGlossaryEntriesForText } from "../GlossaryResolution.mjs";
 import { isStrictlyInside, pathsEqual } from "../PathSafety.mjs";
 import { loadProtectedSourceManifest } from "../ProtectedSourceManifest.mjs";
@@ -126,16 +127,6 @@ function maskBookProtectedSourcePhrases(value, bookInstructions) {
   return masked;
 }
 
-function containsStandalone(text, term) {
-  if (!term) return true;
-  return glossaryPattern(term).test(String(text || ""));
-}
-
-function containsPhrase(text, phrase) {
-  if (!phrase) return true;
-  return glossaryPattern(phrase).test(String(text || ""));
-}
-
 function applicableGlossaryChecks(text, checks) {
   return resolveGlossaryEntriesForText(text, checks).map(({ entry }) => entry);
 }
@@ -225,7 +216,7 @@ function collectGlossaryTableChecks(payload, termKey, definitionKey, exclusions 
     const targetTerm = String(rawEntry[termKey] ?? "").trim();
     const targetDefinition = String(rawEntry[definitionKey] ?? "").trim();
     if (!sourceDefinition || (!targetTerm && !targetDefinition)) continue;
-    checks.set(`${sourceTerm}\u0000${sourceDefinition}`, `${targetTerm}\t${targetDefinition}`);
+    checks.set(`${sourceTerm}\u0000${sourceDefinition}`, { targetTerm, targetDefinition });
   }
   return checks;
 }
@@ -564,8 +555,9 @@ async function main() {
     const tab = sourceSegment.indexOf("\t");
     if (tab >= 0 && sourceSegment.indexOf("\t", tab + 1) < 0) {
       const tableKey = `${sourceSegment.slice(0, tab).trim()}\u0000${sourceSegment.slice(tab + 1).trim()}`;
-      const expectedTableRow = glossaryTableChecks.get(tableKey);
-      if (expectedTableRow !== undefined) {
+      const tableRecommendation = glossaryTableChecks.get(tableKey);
+      if (tableRecommendation !== undefined) {
+        const expectedTableRow = renderGlossaryTableRow(sourceSegment, tableRecommendation);
         glossaryChecksApplied += 2;
         if (outputSegment !== expectedTableRow) {
           addIssue(
@@ -581,9 +573,7 @@ async function main() {
     const glossaryEligibleSource = maskBookProtectedSourcePhrases(sourceSegment, bookInstructions);
     for (const check of applicableGlossaryChecks(glossaryEligibleSource, effectiveGlossaryChecks)) {
       glossaryChecksApplied++;
-      const targetPresent = check.type === "term"
-        ? containsStandalone(outputSegment, check.target)
-        : containsPhrase(outputSegment, check.target);
+      const targetPresent = containsGlossaryTarget(outputSegment, check, config.targetLanguage);
       if (!targetPresent) {
         addIssue(
           "error",

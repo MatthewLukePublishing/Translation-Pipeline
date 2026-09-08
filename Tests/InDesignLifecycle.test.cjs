@@ -61,7 +61,7 @@ function typographyHarness() {
   let saves = 0, closes = 0, updates = 0;
   const doc = { name: "book.indd", modified: false, fullName: { fsName: documentPath }, pages: [{}], allParagraphStyles: styles,
     documentPreferences: { pageWidth: 6, pageHeight: 9 },
-    stories: [{ id: 1, overflows: false, itemLink: null }],
+    stories: [{ id: 1, isValid: true, overflows: false, itemLink: null, tables: [] }],
     links: ["missing", "outdated", "normal"].map((status, i) => ({ name: `Link ${i}`, filePath: `C:/Synthetic/${i}`, status, update() { updates++; } })),
     save() { saves++; this.modified = false; }, close() { closes++; app.documents = []; }, recompose() {},
   };
@@ -120,4 +120,23 @@ test("typography edits touch only the requested batch and require explicit check
   h.app.backgroundTasks = [{}];
   assert.match(h.run("close"), /^ERROR.*background work/);
   assert.equal(h.counts().closes, 0);
+});
+
+test("table-cell audits detect clipping separately from stories and reject uninspected nested tables", () => {
+  const h = typographyHarness();
+  h.run("open");
+  const table = { id: 7, isValid: true, cells: Array.from({ length: 60 }, (_, i) => ({ name: `cell${i}`, overflows: i === 52, tables: [] })) };
+  h.doc.stories.itemByID = id => h.doc.stories.find(s => s.id === id);
+  h.doc.stories[0].tables.push(table);
+  h.doc.stories[0].tables.itemByID = id => id === 7 ? table : null;
+  assert.match(h.run("stories"), /overflows=false\|tableCount=1/);
+  assert.match(h.run("tables", { settings: [{ storyId: 1 }] }), /^TABLE.*cellCount=60/);
+  const scope = [{ storyId: 1, tableId: 7 }];
+  assert.match(h.run("cells", { start: 50, count: 10, settings: scope }), /index=52\|name=cell52\|overflows=true/);
+  assert.match(h.run("cells", { count: 51, settings: scope }), /^ERROR.*fifty/);
+  assert.match(h.run("cells", { settings: [{ storyId: 1, tableId: 9 }] }), /^ERROR.*not found/);
+  table.cells[0].tables = [{}];
+  assert.match(h.run("cells", { count: 1, settings: scope }), /^ERROR.*Nested tables/);
+  assert.deepEqual(h.counts(), { saves: 0, closes: 0, updates: 0 });
+  assert.equal(h.app.scriptPreferences.userInteractionLevel, "original");
 });

@@ -145,8 +145,37 @@
             if (!contains(names, name)) names.push(name);
           }
         }
-        rows.push("STORY|index=" + i + "|id=" + enc(s.id) + "|overflows=" + over + "|linkName=" + enc(linkName) +
+        rows.push("STORY|index=" + i + "|id=" + enc(s.id) + "|overflows=" + over + "|tableCount=" + boundedLength(s.tables.length, 100, "Story tables") + "|linkName=" + enc(linkName) +
           "|linkPath=" + enc(linkPath) + "|pages=" + enc(pages.join(",")) + "|styles=" + enc(names.join(";")));
+      }
+      return rows.length ? rows.join("\n") : "UNCHANGED";
+    }
+    if (action === "tables" || action === "cells") {
+      if (requested.length !== 1) throw new Error("Expected one explicit table audit scope.");
+      var scope = requested[0];
+      s = doc.stories.itemByID(Number(scope.storyId));
+      if (!s || !s.isValid) throw new Error("Table audit story not found.");
+      var tables = s.tables;
+      boundedLength(tables.length, 100, "Story tables");
+      if (action === "tables") {
+        finish = Math.min(tables.length, start + count);
+        for (i = start; i < finish; i++) {
+          rows.push("TABLE|storyId=" + enc(s.id) + "|index=" + i + "|id=" + enc(tables[i].id) +
+            "|cellCount=" + boundedLength(tables[i].cells.length, 10000, "Table cells"));
+        }
+      } else {
+        if (count > 50) throw new Error("At most fifty table cells may be audited per call.");
+        var table = tables.itemByID(Number(scope.tableId));
+        if (!table || !table.isValid) throw new Error("Table audit target not found.");
+        var cells = table.cells;
+        boundedLength(cells.length, 10000, "Table cells");
+        finish = Math.min(cells.length, start + count);
+        for (i = start; i < finish; i++) {
+          var cell = cells[i];
+          if (cell.tables.length) throw new Error("Nested tables require a separately scoped audit; no passing report may be published.");
+          rows.push("CELL|storyId=" + enc(s.id) + "|tableId=" + enc(table.id) + "|index=" + i +
+            "|name=" + enc(cell.name) + "|overflows=" + Boolean(cell.overflows));
+        }
       }
       return rows.length ? rows.join("\n") : "UNCHANGED";
     }

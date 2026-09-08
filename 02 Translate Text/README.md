@@ -37,6 +37,12 @@ service/context disambiguation; they are never forced into a single global lock.
 Deterministic glossary QA covers unambiguous locks; contextual choices still
 require linguistic review against the source and book rules.
 
+A blank recommended glossary-table cell retains the corresponding English
+source cell; it never erases an abbreviation or definition. Table standardization
+and QA share the same renderer and preserve boundary whitespace. In French prose,
+definition-presence checks accept regular gender/number agreement for one-word
+terms ending in `-é`; explicit abbreviations and source matches remain exact.
+
 ## Run
 
 From the repository root:
@@ -52,6 +58,11 @@ From the repository root:
 Use `Status` for the current state, `Validate` after an authorized workbook correction, and `Export` to resume Adobe relinking that was deferred because another InDesign document was open. `Import` verifies the QA workbook hash, payload fingerprint, ICML snapshot, and exact Content-ID coverage before starting its recoverable multi-file transaction.
 
 Before any InDesign action, save and close unrelated documents. Adobe operations must run serially.
+
+Finalization requires both zero overset stories and zero overflowing table cells.
+Tables are inventoried by story ID and cells checked in separate batches of at most
+50. Missing/incomplete cell audits and nested tables stop finalization explicitly;
+nested tables require a separately scoped audit implementation before completion.
 
 `Prepare -DeferRelink` can create and translate the isolated source package
 without opening Adobe. The workspace remains explicitly awaiting relink; run

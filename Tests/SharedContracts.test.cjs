@@ -14,6 +14,30 @@ function importFile(...segments) {
   return import(pathToFileURL(path.join(ROOT, ...segments)).href);
 }
 
+test("glossary table recommendations never erase unspecified cells or boundary whitespace", async () => {
+  const { renderGlossaryTableRow } = await importFile("02 Translate Text", "Code", "GlossaryTable.mjs");
+  assert.equal(renderGlossaryTableRow("Abn.\tAirborne", { targetTerm: "", targetDefinition: "Aéroporté" }), "Abn.\tAéroporté");
+  assert.equal(renderGlossaryTableRow("  EX \t Example\r\n", { targetTerm: "FR", targetDefinition: "Exemple" }), "  FR \t Exemple\r\n");
+  assert.equal(renderGlossaryTableRow("EX\tExample", { targetTerm: "FR", targetDefinition: "" }), "FR\tExample");
+  assert.equal(renderGlossaryTableRow("EX\tExample", {}), "EX\tExample");
+  assert.throws(() => renderGlossaryTableRow("EX\tExample\tExtra", {}), /exactly two/);
+});
+
+test("French definition agreement is accepted without weakening source or acronym matching", async () => {
+  const { containsGlossaryTarget, glossaryPattern } = await importFile("02 Translate Text", "Code", "GlossaryPatterns.mjs");
+  const check = { target: "Aéroporté", kind: "definition" };
+  for (const target of ["aéroporté", "aéroportée", "aéroportés", "aéroportées"]) {
+    assert.equal(containsGlossaryTarget(`Soldats ${target}.`, check, "French"), true);
+  }
+  for (const target of ["aéroportéess", "préaéroportés", "aéroportage"]) {
+    assert.equal(containsGlossaryTarget(target, check, "French"), false);
+  }
+  assert.equal(containsGlossaryTarget("Aéroportés", check, "Portuguese"), false);
+  assert.equal(containsGlossaryTarget("Aéroportés", { ...check, kind: "acronym" }, "French"), false);
+  assert.equal(containsGlossaryTarget("CPTs", { target: "CPT", kind: "acronym" }, "French"), false);
+  assert.equal(glossaryPattern("Aéroporté").test("Aéroportés"), false);
+});
+
 test("targeted rechecks retain valid groups and fail closed on model/query errors", async () => {
   const { validateWithTargetedRecheck } = await importFile("02 Translate Text", "Code", "BatchRecheck.mjs");
   const batch = { batchId: "batch_1", groups: ["a", "b"].map(groupId => ({ groupId, sourceSegments: ["source "] })) };

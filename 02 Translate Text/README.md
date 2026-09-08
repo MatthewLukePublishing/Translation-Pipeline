@@ -131,12 +131,18 @@ translator preserves cached `CrossReferenceSource` segments, the importer
 rejects direct edits to them, and GREP excludes their ranges. The read-only
 editorial verifier checks both format definitions and generated text wrappers;
 saving a definition alone does not prove that the references were refreshed.
+Native page-number variables are inspected through their read-only displayed
+results; their internal marker is never mistaken for a missing page number or
+converted to plain text. Missing or unresolved variable results fail the audit.
 Keep one verified INDD recovery copy before panel edits. Never update all
 references when only a small identified subset needs updating.
 
-After importing the reviewed workbook and updating the affected references in
-the panel, run every shared and target-language GREP expression with the native
-InDesign engine. The supplied matrix has four French punctuation expressions,
+Spacing corrections belong in translation, not a later manual cleanup. Model
+prompts request final Unicode typography, and text postprocessing runs every
+applicable expression before exporting the workbook. The importer also runs the
+rules directly on ICML text, before its first write, to handle patterns spanning
+adjacent bold/italic Content segments. No InDesign interface is used for GREP.
+The supplied matrix has four French punctuation expressions,
 unit spacing, math spacing and ten language-specific date expressions. The
 pipeline escapes the invalid bare plus sign, completes the explicit math
 spacing-after rule, and limits dates to horizontal whitespace and native month
@@ -145,27 +151,44 @@ each job records the applicable runs, including zero matches, and explicit
 language exclusions for the others.
 
 ```powershell
-& '.\02 Translate Text\Code\InDesign\Invoke-InDesignGrepRules.ps1' -JobPath '<job>' -NodePath '<Node executable>' -Mode Audit
-# Review state/grep_plan.json. For linked ICML, correct the workbook and reimport.
-# Apply is available only for unlinked, document-owned text.
-& '.\02 Translate Text\Code\InDesign\Invoke-InDesignGrepRules.ps1' -JobPath '<job>' -NodePath '<Node executable>' -Mode Apply
-& '.\Run-Translation-Job.ps1' -Action Finalize -LayoutSettingsPath '<style profile>'
+# After normal translation QA; these commands do not launch Adobe.
+node '.\02 Translate Text\Code\Import_Translation_Workbook.mjs' --job '<job>' --dry-run
+node '.\02 Translate Text\Code\Import_Translation_Workbook.mjs' --job '<job>'
+node '.\02 Translate Text\Code\IcmlGrepJob.mjs' --job '<job>'
 ```
 
-`Finalize` reruns native GREP verification after applying the styles. It fails
-if corrections remain. Linked ICML is audit-only: checking out and saving a
-story in InDesign strips the pipeline's Content IDs. Correct the translated
-workbook, validate it, and use the recoverable importer before auditing again;
-never check out a linked story to bypass this protection.
-Audits never mutate text; Apply uses one rule and unlinked story
-per call, verifies its previously audited matches, saves checkpoints and keeps
-a hash-verified recovery copy plus a transaction record. An interrupted GREP
-transaction stops further edits until the saved document and any unsaved work
-are reconciled with that copy. Do not delete its journal to bypass recovery.
-Find/change preferences and options are restored even on error. Structural tab
-or paragraph-break changes, unscoped notes, unexpected match counts, and stale
-document or policy evidence fail closed. Completion binds the native GREP,
-editorial and layout reports to the exact final INDD and imported workbook.
+The normal `Import` action includes the same offline pass, followed by Adobe link
+refresh. Direct Node import requires `ready_for_import` and current QA. Save,
+check in and close the edition before writes: edition lock files block the
+transaction. Dry-run never writes or recovers a journal. Workbook/ICML hashes
+are checked before writing; changes made after export/import are not overwritten.
+
+`Code/IcmlGrep.cjs` executes the fixed matrix's tested JavaScript equivalents,
+not the native InDesign regex engine. It decodes text entities for matching but
+patches only changed horizontal spaces at their original XML offsets. It never
+serializes the document, moves letters across style boundaries, crosses table
+cells/paragraphs, changes structural tabs, or edits cross-reference/variable
+nodes. Protected source IDs, Credits styles, book names and glossary locks come
+from QA. Unsupported XML content fails closed; metadata CDATA stays opaque.
+
+`reports/icml_grep_import.json` records all per-file runs and exclusions.
+Import publishes ICML, report and manifest in one recoverable transaction, then
+finalization/completion recheck every imported file against its hash and current
+rules. The approved workbook is not silently rewritten for a style-boundary
+spacing correction: the report explicitly records the deterministic derivation
+and retains both the workbook hash and resulting ICML hashes.
+
+Older imports require current QA and reimport to acquire this evidence. If native
+InDesign checkout/save has stripped Content IDs or changed the ICML, stop for
+reconciliation with the retained snapshot; never invent IDs or overwrite manual
+edits. Panel-only cross-reference changes and layout audits remain separate.
+The native GREP utility is retained for explicitly scoped, document-owned text,
+but is no longer invoked by this translation pipeline.
+
+NNBSP is a descriptive label, never manuscript text or a GREP expression. The
+offline engine writes actual U+202F (narrow nonbreaking space) and U+00A0 (NBSP).
+If giving manual InDesign fallback instructions, provide paste-ready syntax from
+the rule matrix; do not tell the user to type the letters `NNBSP`.
 
 ## Translating the current edition
 

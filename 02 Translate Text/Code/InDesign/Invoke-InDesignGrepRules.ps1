@@ -74,7 +74,7 @@ try{
     $editorial=@(Invoke-InDesignTypographyStep @step -Action editorial-summary)[0]
     $stories=[Collections.Generic.List[object]]::new();$references=[Collections.Generic.List[object]]::new();$records=[Collections.Generic.List[object]]::new()
     for($start=0;$start -lt [int]$summary.stories;$start+=25){foreach($row in @(Invoke-InDesignTypographyStep @step -Action stories -Start $start -Count 25)){$stories.Add($row)}}
-    for($start=0;$start -lt [int]$editorial.references;$start+=25){foreach($row in @(Invoke-InDesignTypographyStep @step -Action editorial-references -Start $start -Count 25)){$references.Add($row)}}
+    for($start=0;$start -lt [int]$editorial.references;$start+=25){foreach($row in @(Invoke-InDesignTypographyStep @step -Action editorial-reference-scopes -Start $start -Count 25)){$references.Add($row)}}
     if($stories.Count -ne [int]$summary.stories -or $references.Count -ne [int]$editorial.references){throw 'Incomplete GREP scope inventory.'}
     foreach($story in $stories){$story | Add-Member -NotePropertyName referenceIds -NotePropertyValue @($references | Where-Object storyId -eq $story.id | ForEach-Object id)}
     for($start=0;$start -lt $stories.Count;$start+=5){

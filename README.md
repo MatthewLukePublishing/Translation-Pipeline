@@ -12,7 +12,8 @@ The repository contains source code, synthetic examples, and offline tests. It i
 - Git when running the distribution-safety test.
 - The official Codex CLI, authenticated with **Sign in with ChatGPT**, for translation stages.
 - Microsoft Excel is optional; the pipeline reads and writes XLSX through Node.js libraries.
-- Adobe InDesign for text export/import and final layout operations.
+- Adobe InDesign for source export, link refresh and final layout operations.
+  ICML import and spacing rules run offline without Adobe.
 - Adobe Illustrator for diagram translation.
 
 The offline test suite does not require Codex, credentials, network access, Microsoft Office, InDesign, or Illustrator.
@@ -96,7 +97,11 @@ Protected source sections and book-specific terminology take precedence.
   hash. Text/caption postprocessing normalizes applicable date and symbol spacing;
   text QA checks mechanical typography outside protected source and glossary locks.
 - ICML import: the workbook must have passed QA under the current policy. The
-  recoverable import changes matching Content IDs, preserving literal XML structure.
+  recoverable import changes matching Content IDs, then runs every applicable
+  spacing formula directly on ICML text before writing the files. Adjacent style
+  segments are handled together; XML, IDs, formatting, credits and panel-generated
+  references remain protected. The report records this spacing-only derivation
+  from the approved workbook and binds it to the exact resulting ICML hashes.
 - InDesign finalization: checks layer order and body-indent styles and emits exact
   encoded definitions for the **Cross-References panel > Define Cross-Reference
   Formats > Definition** editor. All language-specific cross-reference changes
@@ -105,12 +110,12 @@ Protected source sections and book-specific terminology take precedence.
   and close the document. The finalizer verifies the result read-only.
   Formats used exclusively by protected paragraphs
   remain unchanged. Mixed protected/unprotected formats require explicit review.
-- Native GREP: after ICML import, run every shared and target-language formula
-  with InDesign's engine. The bounded Audit/Apply workflow is documented in the
+- Offline GREP: translation postprocessing runs the shared and target-language
+  expressions before workbook export; import handles context across style runs.
+  Finalize and Complete verify the exact imported ICML set without invoking the
+  InDesign GREP interface. Every applicable expression, including zero matches,
+  and every language exclusion is recorded. See the
   [text-stage guide](02%20Translate%20Text/README.md#editorial-rules-and-finishing-order).
-  It excludes protected credits and generated cross-reference text, reports
-  zero-match runs, and rejects stale plans. Finalize and Complete require a
-  passing native GREP report for the exact final document.
 
 Apply revised rules to an already accepted translation with the appropriate job
 active:

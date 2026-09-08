@@ -83,7 +83,7 @@ test("editorial inventory is bounded, read-only and reads only applicable block 
     { blockType: 2, appliedDelimiter: ":", includeDelimiter: false, get customText() { throw Error("Inapplicable"); } },
   ] };
   h.doc.crossReferenceFormats = [format];
-  h.doc.crossReferenceSources = [{ id: 7, appliedFormat: format, sourceText: { parentStory:{id:1},contents:'reference',paragraphs: [{ appliedParagraphStyle: h.styles[0] }] }, get status() { throw Error("Undocumented property"); } }];
+  h.doc.crossReferenceSources = [{ id: 7, appliedFormat: format, sourceText: { parentStory:{id:1},contents:'reference',textVariableInstances:[],paragraphs: [{ appliedParagraphStyle: h.styles[0] }] }, get status() { throw Error("Undocumented property"); } }];
   h.run("open");
   assert.match(h.run("editorial-summary"), /^EDITORIAL_SUMMARY\|layers=1\|formats=1\|references=1\|paragraphStyles=7$/);
   assert.match(h.run("editorial-layers"), /^LAYER\|index=0\|id=1\|name=Body/);
@@ -123,6 +123,19 @@ test("typography audit is bounded and never discards unrelated or modified docum
   assert.equal(h.styles[0].appliedLanguage.name, "English");
   h.doc.fullName.fsName = "C:/Synthetic/edition/book.indd";
   assert.match(h.run("close"), /^CLOSED/);
+});
+
+test("GREP reference scope inventory never reads cached text or native variable results", () => {
+  const h = typographyHarness(); h.run("open");
+  h.doc.crossReferenceSources = [{ id: 7, sourceText: {
+    parentStory: { id: 1 },
+    get contents() { throw Error("Text must not be read"); },
+    get textVariableInstances() { throw Error("Variables must not be read"); },
+    get paragraphs() { throw Error("Paragraphs are unnecessary for identity inventory"); },
+  } }];
+  assert.equal(h.run("editorial-reference-scopes"), "REFERENCE|index=0|id=7|storyId=1");
+  assert.match(h.run("editorial-reference-scopes", { count: 26 }), /^ERROR.*twenty-five/);
+  assert.deepEqual(h.counts(), { saves: 0, closes: 0, updates: 0 });
 });
 
 test("language-specific cross-reference edits cannot bypass the panel encoder", () => {

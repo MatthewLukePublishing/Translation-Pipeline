@@ -56,8 +56,8 @@ function resolveGrepRules(language){
     applicable:rules.filter(rule=>["All",selected].includes(rule.language)),
     notApplicable:rules.filter(rule=>!["All",selected].includes(rule.language)).map(rule=>({id:rule.id,reason:`Language-specific to ${rule.language}`}))};
 }
-// ICU-to-JavaScript subset used only by offline tests and match previews.
-// Production execution must use InDesign's GREP engine, never claim this as that run.
+// Explicit ICU-to-JavaScript subset for this fixed, tested rule matrix.
+// The ICML engine uses this subset; its evidence is NOT a native InDesign run.
 function previewExpression(rule){
   return new RegExp(rule.find.replace(/\\x\{([A-Fa-f0-9]+)\}/gu,"\\u{$1}").replace(/\[:punct:\]/gu,"\\p{P}"),"gu");
 }

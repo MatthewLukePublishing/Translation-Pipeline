@@ -8,6 +8,9 @@ import path from "node:path";
 import XLSX from "../../Code/SheetJsNode.mjs";
 import transactionalFiles from "../../Code/TransactionalFileReplacement.cjs";
 import editorialRules from "../../Code/TranslationEditorialRules.cjs";
+import icmlGrep from "../../Code/IcmlGrep.cjs";
+import grepRules from "../../Code/TranslationGrepRules.cjs";
+import { assertNoIcmlLocks, assertRegularContained, hash, engineSha256 } from "./IcmlGrepJob.mjs";
 import {panelManagedContent} from './PanelManagedReferences.mjs';
 import { fnv1a32Utf16 } from "./ContentFingerprint.mjs";
 import { normalizeContentId } from "./ContentIds.mjs";
@@ -137,17 +140,35 @@ const jobPath = path.resolve(cli.job);
 const configPath = path.join(jobPath, "job_config.json");
 const manifestPath = path.join(jobPath, "job_manifest.json");
 const transactionJournalPath = path.join(jobPath, "state", "content_import_transaction.json");
-const recoveredTransaction = recoverFileSetJournalSync(transactionJournalPath);
-if (recoveredTransaction.recovered) {
-  console.warn(`IMPORT_TRANSACTION_RECOVERED|phase=${recoveredTransaction.phase}|journal=${transactionJournalPath}`);
-}
 const config = readJson(configPath, "job configuration");
+if (!config.productionWorkspace || !pathsEqual(config.jobPath, jobPath)) throw Error("Not the configured production job.");
+// Recovery is a write too: scope-check its targets and require a closed edition.
+if (fs.existsSync(transactionJournalPath)) {
+  if (cli.dryRun) throw Error("Interrupted import requires recovery; dry-run never writes.");
+  assertNoIcmlLocks(config);
+  const journal = readJson(transactionJournalPath,"import journal");
+  for (const item of journal.items || []) {
+    const target = path.resolve(item.filePath);
+    const report = isStrictlyInside(target,path.join(jobPath,"reports")) && /^(?:content_import_report_[\w]+\.txt|icml_grep_import\.json)$/u.test(path.basename(target));
+    const icml = isStrictlyInside(target,config.productionWorkspace.textFolder) && path.extname(target).toLowerCase() === ".icml";
+    if (!pathsEqual(target,manifestPath) && !report && !icml) throw Error("Import recovery target is outside its authorized scope.");
+    for (const candidate of [target,item.backup,item.replacement]) {
+      if (candidate && fs.existsSync(candidate)) assertRegularContained(path.resolve(candidate),icml ? path.resolve(config.productionWorkspace.textFolder) : jobPath);
+    }
+  }
+  const recovery = recoverFileSetJournalSync(transactionJournalPath);
+  console.warn(`IMPORT_TRANSACTION_RECOVERED|phase=${recovery.phase}`);
+}
 const manifest = readJson(manifestPath, "job manifest");
 if (!config.productionWorkspace) throw new Error("The job is not a production workspace job.");
 if (!pathsEqual(config.jobPath, jobPath)) throw new Error("The job configuration path does not match --job.");
 if (manifest.status !== "ready_for_import" || manifest.qa?.status !== "passed") {
   throw new Error(`Job must be ready_for_import with passed QA; found ${manifest.status}.`);
 }
+if (!manifest.qa.grepProtection) throw Error("Validate first to record ICML GREP protections.");
+const manifestHash = sha256(manifestPath), configHash = sha256(configPath);
+const grepPolicy = grepRules.resolveGrepRules(config.targetLanguage);
+if (!cli.dryRun) assertNoIcmlLocks(config);
 const editorialPolicy = editorialRules.resolveEditorialRules(config.targetLanguage, "icml");
 if (manifest.qa.editorialRules?.sha256 !== editorialPolicy.sha256 ||
     (config.editorialRules && config.editorialRules.sha256 !== editorialPolicy.sha256)) {
@@ -184,6 +205,17 @@ if (!expectedPayload || expectedPayload !== payload.fingerprint) {
 const expectedFiles = manifest.icmlFiles || [];
 if (!expectedFiles.length || expectedFiles.length > 5000) throw new Error(`Unexpected manifest ICML file count: ${expectedFiles.length}.`);
 const priorImport = manifest.invalidatedImport?.import;
+// On re-import, the last ICML has already acquired intentional GREP spacing.
+// Structural invariants still come from the immutable, QA-hashed source XLSX,
+// not from the previously derived NBSP/NNBSP boundaries.
+let sourcePayload, sourceWorkbookPath, sourceWorkbookHash;
+if (priorImport) {
+  sourceWorkbookPath = path.resolve(config.paths.inputWorkbook || path.join(jobPath,"input/content_export.xlsx"));
+  if (!isStrictlyInside(sourceWorkbookPath,jobPath)) throw Error("Source workbook is outside the job.");
+  sourceWorkbookHash = sha256(sourceWorkbookPath);
+  if (sourceWorkbookHash !== manifest.qa.hashes.inputWorkbookSha256) throw Error("Source workbook changed since QA.");
+  sourcePayload = workbookPayload(sourceWorkbookPath,manifest.workbook?.worksheet || "");
+}
 const priorFiles = new Map();
 if (priorImport) {
   if (priorImport.engine !== "node-journaled-xlsx-import" ||
@@ -213,7 +245,11 @@ for (const expected of expectedFiles) {
   const pathKey = filePath.toLowerCase();
   if (seenPaths.has(pathKey)) throw new Error(`Duplicate manifest ICML path: ${filePath}`);
   seenPaths.add(pathKey);
-  const originalText = fs.readFileSync(filePath, "utf8").replace(/^\uFEFF/, "");
+  assertRegularContained(filePath, textRoot);
+  const originalBytes = fs.readFileSync(filePath);
+  const decodedText = new TextDecoder("utf-8", {fatal:true, ignoreBOM:true}).decode(originalBytes);
+  const bom = decodedText.startsWith("\uFEFF") ? "\uFEFF" : "";
+  const originalText = decodedText.replace(/^\uFEFF/, "");
   const currentFingerprint = fnv1a32Utf16(originalText);
   if (!priorImport && currentFingerprint !== String(expected.fingerprint || "").toUpperCase()) {
     throw new Error(`ICML changed after export; import blocked: ${filePath}`);
@@ -225,7 +261,7 @@ for (const expected of expectedFiles) {
   }
   const contentPattern = /<Content\b([^>]*\bid\s*=\s*"([^"]+)"[^>]*?)(\/>|>([\s\S]*?)<\/Content>)/g;
   const panelManaged = panelManagedContent(originalText);
-  const updatedText = originalText.replace(contentPattern, (full, attrs, rawId, closing, innerContent) => {
+  const importedText = originalText.replace(contentPattern, (full, attrs, rawId, closing, innerContent) => {
     const id = normalizeContentId(rawId);
     if (!idLocations.has(id)) idLocations.set(id, []);
     idLocations.get(id).push(filePath);
@@ -237,13 +273,20 @@ for (const expected of expectedFiles) {
     if (panelManaged.has(id) && translatedContent !== panelManaged.get(id)) {
       throw new Error(`Content ID ${id} is generated cross-reference text. Use the Cross-References panel encoder; direct import changes are forbidden.`);
     }
-    assertIcmlReplacementStructure(sourceContent, translatedContent, `Content ID ${id} in ${filePath}`);
+    if (sourcePayload && !sourcePayload.contentMap.has(id)) throw Error("Source workbook is missing an imported Content ID.");
+    assertIcmlReplacementStructure(sourcePayload ? sourcePayload.contentMap.get(id) : sourceContent, translatedContent, `Content ID ${id} in ${filePath}`);
     const replacement = xmlEscapePreserveIcml(translatedContent);
     if (closing === "/>" && replacement === "") return `<Content${attrs}/>`;
     return `<Content${attrs}>${replacement}</Content>`;
   });
+  const grepResult = icmlGrep.applyIcmlGrep(importedText, config.targetLanguage, manifest.qa.grepProtection);
+  const updatedText = grepResult.text;
+  if (icmlGrep.applyIcmlGrep(updatedText,config.targetLanguage,manifest.qa.grepProtection).changed) throw Error("ICML GREP did not reach a stable result.");
   plans.push({
     filePath,
+    originalBytes,
+    bom,
+    grep: { records: grepResult.records, changed: grepResult.changed, protectedContents: grepResult.protectedContents },
     originalText,
     updatedText,
     originalSha256: sha256Text(originalText),
@@ -284,20 +327,34 @@ const reportData = {
   dryRun: cli.dryRun,
 };
 if (cli.dryRun) {
-  console.log(`IMPORT_DRY_RUN_PASSED|files=${plans.length}|modified=${filesModified}|matched=${totalMatched}|payload=${payload.fingerprint}`);
+  console.log(`IMPORT_DRY_RUN_PASSED|files=${plans.length}|modified=${filesModified}|matched=${totalMatched}|grepRules=${grepPolicy.applicable.length}|grepChanges=${plans.reduce((n,p)=>n+p.grep.records.reduce((s,r)=>s+r.changes,0),0)}|payload=${payload.fingerprint}`);
   process.exit(0);
 }
 
 const reportPath = path.join(jobPath, "reports", `content_import_report_${timestamp()}.txt`);
+const grepReportPath = path.join(jobPath, "reports", "icml_grep_import.json");
 for (const plan of plans) {
-  if (fs.readFileSync(plan.filePath, "utf8").replace(/^\uFEFF/, "") !== plan.originalText) {
+  if (!fs.readFileSync(plan.filePath).equals(plan.originalBytes)) {
     throw new Error(`ICML changed during the import audit: ${plan.filePath}`);
   }
 }
+assertNoIcmlLocks(config);
+if (sha256(workbookPath) !== actualWorkbookHash || sha256(configPath) !== configHash || sha256(manifestPath) !== manifestHash) throw Error("Job/workbook changed during import planning.");
+if (sourceWorkbookPath && sha256(sourceWorkbookPath) !== sourceWorkbookHash) throw Error("Source workbook changed during import planning.");
 const updatedManifest = structuredClone(manifest);
 updatedManifest.status = "imported";
 updatedManifest.updatedAt = completedAt;
 updatedManifest.import = {
+  grep: {
+    reportPath: grepReportPath,
+    status: "passed", method: "offline_icml_grep", policySha256: grepPolicy.sha256,
+    engineSha256: engineSha256(),
+    protectionSha256: hash(JSON.stringify(manifest.qa.grepProtection)),
+    notApplicable: grepPolicy.notApplicable,
+    files: plans.map(plan => ({ path: plan.filePath, ...plan.grep })),
+    // QA hashes describe the approved translation input, not an unrecorded edit.
+    derivation: "QA workbook -> Content-ID import -> protected, spacing-only ICML GREP",
+  },
   editorialRules: { version: editorialPolicy.version, sha256: editorialPolicy.sha256 },
   completedAt,
   documentPath,
@@ -321,8 +378,9 @@ updatedManifest.import = {
   })),
 };
 const replacements = [
-  ...plans.filter((plan) => plan.changed).map((plan) => ({ filePath: plan.filePath, data: plan.updatedText, options: "utf8" })),
+  ...plans.filter((plan) => plan.changed).map((plan) => ({ filePath: plan.filePath, data: plan.bom + plan.updatedText, options: "utf8" })),
   { filePath: reportPath, data: makeReport(reportData), options: "utf8" },
+  { filePath: grepReportPath, data: JSON.stringify({ ...updatedManifest.import.grep, workbookSha256: actualWorkbookHash, icmlAfterSetSha256 }, null, 2) + "\n", options: "utf8" },
   { filePath: manifestPath, data: `${JSON.stringify(updatedManifest, null, 2)}\n`, options: "utf8" },
 ];
 try {

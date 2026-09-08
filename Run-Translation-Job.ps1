@@ -593,9 +593,11 @@ function Invoke-ProductionFinalize {
     $styleReportPath = Join-Path $job.JobPath 'reports\style_application_final.json'
     $auditReportPath = Join-Path $job.JobPath 'reports\layout_audit_final.json'
     $productsRoot = Get-ConfiguredProductsRoot
+    # Refuse stale ICML evidence before any Adobe layout work is attempted.
+    Invoke-NodeScript -Script (Join-Path $stageTwoRoot 'Code\IcmlGrepJob.mjs') -JobPath $job.JobPath
     & $translationStyleSetterPath -DocumentPath $documentPath -TargetLanguage ([string]$job.Config.targetLanguage) -SettingsPath $resolvedSettings -ReportPath $styleReportPath -ProductsRoot $productsRoot
     & (Join-Path $stageTwoRoot 'Code\InDesign\Set-InDesignEditorialRules.ps1') -JobPath $job.JobPath -NodePath $codexNodePath -ProductsRoot $productsRoot
-    & (Join-Path $stageTwoRoot 'Code\InDesign\Invoke-InDesignGrepRules.ps1') -JobPath $job.JobPath -NodePath $codexNodePath -Mode Verify -ProductsRoot $productsRoot
+    Invoke-NodeScript -Script (Join-Path $stageTwoRoot 'Code\IcmlGrepJob.mjs') -JobPath $job.JobPath
     & $typographyAuditPath -DocumentPath $documentPath -ReportPath $auditReportPath -ProductsRoot $productsRoot
 
     $audit = Read-JsonFile -Path $auditReportPath -Label 'final layout audit'
@@ -620,8 +622,8 @@ function Invoke-ProductionFinalize {
         editorialReport = (Join-Path $job.JobPath 'reports\editorial_layout_application.json')
         editorialReportSha256 = (Get-FileHash -LiteralPath (Join-Path $job.JobPath 'reports\editorial_layout_application.json') -Algorithm SHA256).Hash
         grepPolicySourceSha256 = (Get-FileHash -LiteralPath (Join-Path $programRoot 'Code\TranslationGrepRules.cjs') -Algorithm SHA256).Hash
-        grepReport = (Join-Path $job.JobPath 'reports\grep_verification.json')
-        grepReportSha256 = (Get-FileHash -LiteralPath (Join-Path $job.JobPath 'reports\grep_verification.json') -Algorithm SHA256).Hash
+        grepReport = (Join-Path $job.JobPath 'reports\icml_grep_import.json')
+        grepReportSha256 = (Get-FileHash -LiteralPath (Join-Path $job.JobPath 'reports\icml_grep_import.json') -Algorithm SHA256).Hash
         completedAt = [DateTime]::UtcNow.ToString('o')
         settingsPath = $resolvedSettings
         auditReport = $auditReportPath
@@ -718,7 +720,7 @@ function Assert-ProductionCompletionEvidence {
         @{ Path = $WorkbookPath; Hash = [string]$Manifest.qa.hashes.outputWorkbookSha256; Label = 'QA workbook' }
         @{ Path = [string]$Manifest.layoutFinalization.editorialReport; Hash = [string]$Manifest.layoutFinalization.editorialReportSha256; Label = 'editorial layout report' }
         @{ Path = $GrepPolicyPath; Hash = [string]$Manifest.layoutFinalization.grepPolicySourceSha256; Label = 'GREP policy' }
-        @{ Path = [string]$Manifest.layoutFinalization.grepReport; Hash = [string]$Manifest.layoutFinalization.grepReportSha256; Label = 'native GREP verification' }
+        @{ Path = [string]$Manifest.layoutFinalization.grepReport; Hash = [string]$Manifest.layoutFinalization.grepReportSha256; Label = 'offline ICML GREP verification' }
     )
     foreach ($item in $expected) {
         if ($item.Hash -notmatch '^[A-Fa-f0-9]{64}$' -or -not (Test-Path -LiteralPath $item.Path -PathType Leaf)) {
@@ -756,8 +758,9 @@ function Complete-ProductionJob {
     Assert-ProductionCompletionEvidence -Manifest $manifest -DocumentPath $documentPath -LayoutAuditPath $layoutAuditPath -WorkbookPath (Join-Path $job.JobPath 'output\content_import.xlsx') -EditorialPolicyPath (Join-Path $programRoot 'Code\TranslationEditorialRules.json') -GrepPolicyPath (Join-Path $programRoot 'Code\TranslationGrepRules.cjs')
     $editorialLayout = Read-JsonFile -Path ([string]$manifest.layoutFinalization.editorialReport) -Label 'editorial layout report'
     if ($editorialLayout.status -ne 'passed' -or $editorialLayout.documentSha256 -ne $manifest.layoutFinalization.documentSha256) { throw 'The editorial layout report does not pass for the finalized document.' }
-    $grepVerification = Read-JsonFile -Path ([string]$manifest.layoutFinalization.grepReport) -Label 'native GREP verification'
-    if ($grepVerification.status -ne 'passed' -or $grepVerification.method -ne 'indesign_native_grep' -or $grepVerification.documentSha256 -ne $manifest.layoutFinalization.documentSha256) { throw 'All applicable GREP formulas must pass in the native engine for the finalized document.' }
+    $grepVerification = Read-JsonFile -Path ([string]$manifest.layoutFinalization.grepReport) -Label 'offline ICML GREP verification'
+    if ($grepVerification.status -ne 'passed' -or $grepVerification.method -ne 'offline_icml_grep' -or $grepVerification.icmlAfterSetSha256 -ne $manifest.import.icmlAfterSetSha256) { throw 'All applicable GREP formulas must pass for the exact imported ICML set.' }
+    Invoke-NodeScript -Script (Join-Path $stageTwoRoot 'Code\IcmlGrepJob.mjs') -JobPath $job.JobPath
     $layoutAudit = Read-JsonFile -Path $layoutAuditPath -Label 'final layout audit'
     if ([int]$layoutAudit.overflow.storyCount -ne 0) { throw 'The final layout audit contains overset stories.' }
     if ([string]$layoutAudit.tableAudit.status -ne 'complete' -or [int]$layoutAudit.overflow.cellCount -ne 0) { throw 'The final layout audit must completely check table cells without clipped text.' }

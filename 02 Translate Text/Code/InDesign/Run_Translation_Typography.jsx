@@ -23,6 +23,21 @@
     if (length > limit) throw new Error(label + " exceeds the bounded audit limit: " + length);
     return length;
   }
+  function renderedReferenceText(sourceText) {
+    // InDesign exposes a page-number variable as U+0018 in contents. Read its
+    // result without converting the live variable to text or updating it.
+    var raw = String(sourceText.contents), variables = sourceText.textVariableInstances;
+    boundedLength(variables.length, 20, "Cross-reference text variables");
+    var index = 0;
+    var rendered = raw.replace(/\u0018/g, function () {
+      if (index >= variables.length) throw new Error("Missing cross-reference text variable.");
+      var value = String(variables[index++].resultText);
+      if (!value || /[\u0018\r\n]/.test(value)) throw new Error("Unresolved cross-reference text variable.");
+      return value;
+    });
+    if (index !== variables.length) throw new Error("Cross-reference variable inventory differs from its markers.");
+    return rendered;
+  }
   var interaction = app.scriptPreferences.userInteractionLevel;
   try {
     app.scriptPreferences.userInteractionLevel = UserInteractionLevels.NEVER_INTERACT;
@@ -86,7 +101,7 @@
       }
       return rows.length ? rows.join("\n") : "UNCHANGED";
     }
-    if (action === "editorial-references") {
+    if (action === "editorial-references" || action === "editorial-reference-scopes") {
       if (count > 25) throw new Error("At most twenty-five cross-reference sources per call.");
       var referenceSources = doc.crossReferenceSources;
       boundedLength(referenceSources.length, 10000, "Cross-reference sources");
@@ -94,9 +109,15 @@
       for (i = start; i < finish; i++) {
         var reference = referenceSources[i];
         var sourceText = reference.sourceText;
+        // GREP needs identities only to exclude native reference ranges. Do not
+        // read rendered text or variable results during its scope inventory.
+        if (action === "editorial-reference-scopes") {
+          rows.push("REFERENCE|index=" + i + "|id=" + enc(reference.id) + "|storyId=" + enc(sourceText.parentStory.id));
+          continue;
+        }
         if (sourceText.paragraphs.length !== 1) throw new Error("Cross-reference spans multiple paragraphs; scoped review required.");
         rows.push("REFERENCE|index=" + i + "|id=" + enc(reference.id) + "|formatId=" + enc(reference.appliedFormat.id) +
-          "|storyId=" + enc(sourceText.parentStory.id) + "|text=" + enc(sourceText.contents) +
+          "|storyId=" + enc(sourceText.parentStory.id) + "|text=" + enc(renderedReferenceText(sourceText)) +
           "|paragraphStyle=" + enc(stylePath(sourceText.paragraphs[0].appliedParagraphStyle)));
       }
       return rows.length ? rows.join("\n") : "UNCHANGED";

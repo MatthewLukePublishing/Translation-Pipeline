@@ -12,7 +12,8 @@ import fileUtilities from "../../Code/FileUtilities.cjs";
 import transactionalFiles from "../../Code/TransactionalFileReplacement.cjs";
 import {
   configuredPattern,
-  countExactOccurrences,
+  preservedSourceNameIssues,
+  assertPreservedSourceNames,
   loadBookTranslationInstructionSnapshot,
 } from "./BookTranslationRules.mjs";
 import { normalizeContentId } from "./ContentIds.mjs";
@@ -210,14 +211,7 @@ function readBookTranslationInstructions(jobDir, config) {
 function violatesBookInstructions(source, target, instructions) {
   if (!instructions.applied) return false;
   if (instructions.forbiddenTargetPatterns.some((rule) => configuredPattern(rule).test(target))) return true;
-  for (const rule of instructions.preserveSourcePatterns) {
-    const matches = [...String(source || "").matchAll(configuredPattern(rule))].map((match) => match[0]);
-    for (const phrase of new Set(matches)) {
-      const expected = matches.filter((candidate) => candidate === phrase).length;
-      if (countExactOccurrences(target, phrase) < expected) return true;
-    }
-  }
-  return false;
+  return preservedSourceNameIssues(source, target, instructions.preserveSourcePatterns).length > 0;
 }
 
 function assertBookInstructionOutput(sourceValues, outputValues, protectedIds, instructions) {
@@ -230,15 +224,7 @@ function assertBookInstructionOutput(sourceValues, outputValues, protectedIds, i
       const match = configuredPattern(rule).exec(target);
       if (match) throw new Error(`Book instruction '${rule.id}' failed at workbook row ${row + 1}: ${rule.message || `forbidden target '${match[0]}'`}`);
     }
-    for (const rule of instructions.preserveSourcePatterns) {
-      const matches = [...source.matchAll(configuredPattern(rule))].map((match) => match[0]);
-      for (const phrase of new Set(matches)) {
-        const expected = matches.filter((candidate) => candidate === phrase).length;
-        if (countExactOccurrences(target, phrase) < expected) {
-          throw new Error(`Book instruction '${rule.id}' failed at workbook row ${row + 1}: preserve '${phrase}' exactly.`);
-        }
-      }
-    }
+    assertPreservedSourceNames(source, target, instructions.preserveSourcePatterns, `workbook row ${row + 1}`);
   }
 }
 
@@ -583,6 +569,7 @@ function validateAndRestoreResponse(response, batch, bookInstructions, requireBr
         throw new Error(`Blank translation for ${sourceGroup.groupId}, segment ${index + 1}.`);
       }
       assertSegmentStructure(sourceGroup.sourceSegments[index], translated, location);
+      assertPreservedSourceNames(sourceGroup.sourceSegments[index], translated, bookInstructions.preserveSourcePatterns, location);
       for (const rule of bookInstructions.forbiddenTargetPatterns) {
         const match = configuredPattern(rule).exec(translated);
         if (match) {

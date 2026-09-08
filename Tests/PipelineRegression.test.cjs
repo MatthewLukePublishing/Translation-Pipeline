@@ -293,3 +293,50 @@ test("journaled re-import accepts the exact previous output but never overwrites
     fs.rmSync(job, { recursive: true, force: true });
   }
 });
+
+test("offline ICML import runs GREP across segments, preserves BOM, refuses locks and verifies exact output", async () => {
+  const job = fs.mkdtempSync(path.join(os.tmpdir(), "translate-icml-grep-"));
+  try {
+    const { fnv1a32Utf16 } = await import(pathToFileURL(path.join(ROOT, "02 Translate Text/Code/ContentFingerprint.mjs")).href);
+    const workspace = path.join(job,"edition"), textFolder = path.join(workspace,"Text");
+    fs.mkdirSync(textFolder,{recursive:true});
+    const icml = path.join(textFolder,"story.icml"), second = path.join(textFolder,"second.icml");
+    const original = '<ParagraphStyleRange id="p1"><CharacterStyleRange><Content id="id-1">12 </Content></CharacterStyleRange><CharacterStyleRange><Content id="id-2">km</Content></CharacterStyleRange></ParagraphStyleRange>';
+    const other = '<ParagraphStyleRange id="p2"><Content id="id-3">Source</Content></ParagraphStyleRange>';
+    fs.writeFileSync(icml,'\uFEFF'+original); fs.writeFileSync(second,other);
+    const headers = ["ParagraphStyleRange id", "ParagraphStyleRange content", "Content tag", "Content content"];
+    const output = path.join(job,"output/content_import.xlsx");
+    const rows = [headers,["p1","12 km","id-1","12 "],["","","id-2","km"],["p2","Source","id-3","Source"]];
+    writeWorkbook(path.join(job,"input/content_export.xlsx"), rows);
+    writeWorkbook(output, [...rows.slice(0,3),["p2","Cible","id-3","Cible"]]);
+    fs.writeFileSync(path.join(job,"job_config.json"),JSON.stringify({jobId:"fixture",jobPath:job,book:"DEMO",targetLanguage:"French",paths:{outputWorkbook:output},productionWorkspace:{root:workspace,textFolder,documentPath:path.join(workspace,"book.indd")}}));
+    fs.writeFileSync(path.join(job,"job_manifest.json"),JSON.stringify({jobId:"fixture",status:"translated",workbook:{dataRowCount:3,contentIdCount:3},icmlFiles:[{path:icml,sha256:crypto.createHash("sha256").update(original).digest("hex").toUpperCase(),fingerprint:fnv1a32Utf16(original)},{path:second,sha256:sha256(second),fingerprint:fnv1a32Utf16(other)}]}));
+    const run = (name, extra=[]) => spawnSync(process.execPath,[path.join(ROOT,"02 Translate Text/Code",name),"--job",job,...extra],{cwd:ROOT,encoding:"utf8",windowsHide:true});
+    assert.equal(run("Validation/Validate_Translation_Job.js").status,0);
+    const before = fs.readFileSync(icml), workbookHash = sha256(output);
+    assert.equal(run("Import_Translation_Workbook.mjs",["--dry-run"]).status,0);
+    assert.deepEqual(fs.readFileSync(icml),before);
+    const lock = path.join(workspace,"book.idlk"); fs.writeFileSync(lock,"");
+    const blocked = run("Import_Translation_Workbook.mjs");
+    assert.notEqual(blocked.status,0); assert.match(blocked.stderr,/lock found/);
+    assert.deepEqual(fs.readFileSync(icml),before); fs.unlinkSync(lock);
+    const imported = run("Import_Translation_Workbook.mjs"); assert.equal(imported.status,0,imported.stderr);
+    assert.equal(fs.readFileSync(icml,"utf8"),'\uFEFF'+original.replace('12 ','12\u00a0'));
+    assert.equal(sha256(output),workbookHash,"approved workbook is not silently rewritten");
+    const manifest = JSON.parse(fs.readFileSync(path.join(job,"job_manifest.json"),"utf8"));
+    assert.equal(manifest.import.grep.files.length,2);
+    assert.equal(manifest.import.grep.files[0].records.length,8);
+    assert.equal(manifest.import.grep.files[1].records.every(r=>r.changes===0),true);
+    assert.equal(fs.existsSync(path.join(job,"state/content_import_transaction.json")),false);
+    const verified = run("IcmlGrepJob.mjs"); assert.equal(verified.status,0,verified.stderr);
+    // Existing jobs can acquire the new evidence without manual manifest resets.
+    delete manifest.import.grep;
+    fs.writeFileSync(path.join(job,"job_manifest.json"),JSON.stringify(manifest));
+    const renewedQa=run("Validation/Validate_Translation_Job.js"); assert.equal(renewedQa.status,0,renewedQa.stderr);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(job,"job_manifest.json"))).status,"ready_for_import");
+    const renewedImport=run("Import_Translation_Workbook.mjs"); assert.equal(renewedImport.status,0,renewedImport.stderr);
+    assert.equal(run("IcmlGrepJob.mjs").status,0);
+    fs.writeFileSync(second,fs.readFileSync(second,"utf8").replace("Cible","User edit"));
+    assert.match(run("IcmlGrepJob.mjs").stderr,/ICML changed after import/);
+  } finally { fs.rmSync(job,{recursive:true,force:true}); }
+});

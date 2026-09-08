@@ -6,6 +6,8 @@ import XLSX from "../../../Code/SheetJsNode.mjs";
 import fileUtilities from "../../../Code/FileUtilities.cjs";
 import textNormalization from "../../../Code/TextNormalization.cjs";
 import editorialRules from "../../../Code/TranslationEditorialRules.cjs";
+import grepRules from "../../../Code/TranslationGrepRules.cjs";
+import { engineSha256 } from "../IcmlGrepJob.mjs";
 import transactionalFiles from "../../../Code/TransactionalFileReplacement.cjs";
 import { fnv1a32Utf16 } from "../ContentFingerprint.mjs";
 import { normalizeContentId } from "../ContentIds.mjs";
@@ -289,6 +291,12 @@ async function main() {
   }
   const manifestStatusBeforeQa = String(manifest.status || "");
   let importStillCurrent = manifestStatusBeforeQa === "imported";
+  if (importStillCurrent && config.productionWorkspace) {
+    const grep = manifest.import?.grep;
+    if (grep?.status !== "passed" || grep.method !== "offline_icml_grep" ||
+        grep.policySha256 !== grepRules.resolveGrepRules(config.targetLanguage).sha256 ||
+        grep.engineSha256 !== engineSha256()) importStillCurrent = false;
+  }
   if (!["translated", "ready_for_import", "qa_failed", "imported"].includes(manifestStatusBeforeQa)) {
     throw new Error(
       `Job manifest status must be translated, ready_for_import, qa_failed, or imported before QA; found "${manifest.status || "(blank)"}".`
@@ -550,6 +558,7 @@ async function main() {
   );
 
   const editorialPolicy = editorialRules.resolveEditorialRules(config.targetLanguage, "text");
+  const grepProtectedStrings = new Set(effectiveGlossaryChecks.map(check => check.target).filter(Boolean));
   if (config.editorialRules && config.editorialRules.sha256 !== editorialPolicy.sha256) {
     addIssue("error", "EDITORIAL_POLICY_CHANGED", "The editorial policy changed after this review was prepared; prepare a new review before import.");
   }
@@ -564,6 +573,7 @@ async function main() {
       ...bookInstructions.preserveSourcePatterns.flatMap(rule => [...sourceText.matchAll(configuredPattern(rule))].map(match => match[0])),
       ...effectiveGlossaryChecks.map(check => check.target),
     ].filter(Boolean);
+    for (const value of protectedStrings) grepProtectedStrings.add(value);
     for (const issue of editorialRules.auditEditorialText(output.data[r]?.[3], config.targetLanguage, { protectedStrings, languageRules: editorialPolicy.language })) {
       addIssue(issue.severity, issue.code, issue.message, { row: r + 1, column: 4, contentId });
     }
@@ -664,7 +674,7 @@ async function main() {
     // imported/finalized status, even when its new text passes all checks.
     manifest.invalidatedImport = {
       invalidatedAt: report.generatedAt,
-      reason: "Workbook bytes or payload changed; re-import and finalization required.",
+      reason: "Workbook bytes, payload or ICML GREP implementation changed; re-import and finalization required.",
       import: manifest.import || null,
       layoutFinalization: manifest.layoutFinalization || null,
     };
@@ -676,6 +686,11 @@ async function main() {
   manifest.updatedAt = new Date().toISOString();
   manifest.qa = {
     status,
+    grepProtection: {
+      protectedContentIds: [...protectedSourceIds, ...panelManaged.keys()],
+      protectedStyles: ["Credits", config.protectedSourceRules?.paragraphStyleName].filter(Boolean),
+      protectedStrings: [...grepProtectedStrings],
+    },
     editorialRules: report.editorialRules,
     completedAt: report.generatedAt,
     summary: report.summary,

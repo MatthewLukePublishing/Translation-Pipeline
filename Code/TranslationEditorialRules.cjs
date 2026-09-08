@@ -60,6 +60,7 @@ function editorialPrompt(language, stage, expectedSha256) {
     ...selected.precedence,
     ...selected.rules.map(rule => `[${rule.id}] ${rule.instruction}`),
     ...localRules,
+    ...(["text", "diagram", "caption"].includes(stage) ? ["Produce the final language-specific Unicode spacing during translation, before export/import. Do not defer text corrections to InDesign GREP. NNBSP is a label, not text or GREP syntax; use the actual U+202F character where required, and U+00A0 for NBSP."] : []),
     "Apply only relevant rules. Do not modify protected source quotations, official designations, glossary locks, literal markup or identifiers to satisfy a generic style rule.",
   ].join("\n");
 }
@@ -135,7 +136,9 @@ function normalizeEditorialText(value, language, options = {}) {
     // not guessed to be ordinary quantities. Semantic review handles those cases.
     text=text.replace(/(\d)[ \u00A0\u202F\u2009]+(mm|cm|km|mg|kg|in|ft|yd|mi|min|MOA|mil|m|g|s|°C)(?![\p{L}\p{N}_])/gu,"$1\u00A0$2");
     text=text.replace(/(\d)[ \u00A0\u202F]+([+−×÷=≠≈<>≤≥±])[ \u00A0\u202F]+(?=[+−-]?\d)/gu,"$1\u00A0$2\u00A0");
-    return text;
+    // Lazy loading avoids the policy module's language-list dependency cycle.
+    // All applicable matrix expressions run before the translation is exported.
+    return require("./IcmlGrep.cjs").transformText(text, selected.language).text;
   });
 }
 

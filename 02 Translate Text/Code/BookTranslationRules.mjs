@@ -133,5 +133,23 @@ export function countExactOccurrences(text, value) {
   if (!value) return 0;
   return String(text || "").split(value).length - 1;
 }
+
+export function preservedSourceNameIssues(source, target, rules = []) {
+  const issues = [];
+  for (const rule of rules) {
+    const matches = [...String(source || "").matchAll(configuredPattern(rule))].map(match => match[0]);
+    for (const phrase of new Set(matches)) {
+      const expected = matches.filter(value => value === phrase).length;
+      const actual = countExactOccurrences(target, phrase);
+      if (actual !== expected) issues.push({ ruleId: rule.id, phrase, expected, actual });
+    }
+  }
+  return issues;
+}
+
+export function assertPreservedSourceNames(source, target, rules, location) {
+  const issue = preservedSourceNameIssues(source, target, rules)[0];
+  if (issue) throw new Error(`Book instruction '${issue.ruleId}' failed in ${location}: preserve '${issue.phrase}' exactly ${issue.expected} time(s); found ${issue.actual}. Keep valid previous wording and do not add another copy of the official name.`);
+}
 import path from "node:path";
 import { isStrictlyInside } from "./PathSafety.mjs";

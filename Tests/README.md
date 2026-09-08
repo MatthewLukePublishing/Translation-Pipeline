@@ -18,9 +18,10 @@ definition agreement, and bounded table-cell overflow checks that fail closed on
 unsupported nested tables.
 
 Editorial coverage includes stage-specific rules for ten languages, protected
-cross-reference caches, panel-only reference changes, complete native-GREP
-coverage accounting, special-space decoding, and protection against linked-ICML
-reserialization that would strip Content IDs. Native Adobe evidence is a
-separate production gate; offline mocks are never reported as native execution.
+cross-reference caches, panel-only reference changes, complete offline ICML GREP
+coverage, cross-style text boundaries, tables, entities, byte-preserved metadata,
+lock refusal, BOM retention and hash-bound import verification. The optional
+native-GREP utility has separate safety mocks. Offline execution is never
+reported as native Adobe execution.
 
 The suite does not use private workbooks, network access, credentials, paid services, model queries, Microsoft Office, InDesign, or Illustrator.

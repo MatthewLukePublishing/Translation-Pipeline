@@ -92,6 +92,29 @@ test("line-break encoding is restored without inventing or dropping separators",
   assert.equal(restoreLockedLineBreaks("Un\u2028Deux\nTrois", protectedBreaks.locks, false), "Un\u2028Deux\nTrois");
 });
 
+test("official-name additions and omissions trigger a recheck of only the invalid group", async () => {
+  const { assertPreservedSourceNames, preservedSourceNameIssues } = await importFile("02 Translate Text", "Code", "BookTranslationRules.mjs");
+  const { validateWithTargetedRecheck } = await importFile("02 Translate Text", "Code", "BatchRecheck.mjs");
+  const rules = [{ id: "official_service", pattern: "U\\.S\\. Navy", flags: "gu" }];
+  const source = "U.S. Navy personnel on a Navy boat.";
+  const valid = "Du personnel de l’U.S. Navy sur une embarcation de la Navy.";
+  const invalid = "Du personnel de l’U.S. Navy sur une embarcation de l’U.S. Navy.";
+  assert.deepEqual(preservedSourceNameIssues(source, valid, rules), []);
+  assert.throws(() => assertPreservedSourceNames(source, invalid, rules, "synthetic segment"), /exactly 1 time\(s\); found 2/);
+  assert.throws(() => assertPreservedSourceNames(source, "Personnel sur une embarcation", rules, "synthetic segment"), /found 0/);
+  assert.doesNotThrow(() => assertPreservedSourceNames("U.S. Navy / U.S. Navy", "U.S. Navy / U.S. Navy", rules, "repeated source"));
+  const batch = { batchId: "names", groups: ["a", "b"].map(groupId => ({ groupId, sourceSegments: [source] })) };
+  const response = { batch_id: "names", groups: [{ group_id: "a", segments: [valid] }, { group_id: "b", segments: [invalid] }] };
+  const result = await validateWithTargetedRecheck({ response, batch,
+    validate: (value, input) => { for (const group of input.groups) assertPreservedSourceNames(group.sourceSegments[0], value.groups.find(g => g.group_id === group.groupId).segments[0], rules, group.groupId); return value.groups; },
+    query: async (repair, context) => { assert.deepEqual(repair.groups.map(g => g.groupId), ["b"]); assert.match(context[0].validation_error, /found 2/); return { batch_id: repair.batchId, groups: [{ group_id: "b", segments: [valid] }] }; },
+  });
+  assert.equal(result.response.groups[0], response.groups[0]);
+  assert.equal(result.response.groups[1].segments[0], valid);
+  const translator = fs.readFileSync(path.join(ROOT, "02 Translate Text/Code/Translate_ICML_Codex_Subscription.mjs"), "utf8");
+  assert.match(translator, /assertPreservedSourceNames\(sourceGroup\.sourceSegments\[index\], translated/);
+});
+
 test("official headquarters-unit qualifiers are preserved atomically, not partly translated", async () => {
   const { configuredPattern } = await importFile("02 Translate Text", "Code", "BookTranslationRules.mjs");
   const rule = { id: "official_unit_type_abbreviation", pattern: "\\b(?:Bn|Co)\\.", flags: "gu" };

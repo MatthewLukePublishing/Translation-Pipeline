@@ -8,5 +8,4 @@ Place the real workbook under `Working Files` and run from the repository root:
 node '.\04 Translate Comic Captions\Code\Translate_Comic_Captions.js'
 ```
 
-Use `--check` for a read-only readiness check and `--max-batches N` for a bounded run. The translator uses only the ChatGPT-authenticated Codex subscription, requires the latest visible harness frontier with `xhigh`, and does not load paid API credentials. `Working Files`, `Output`, debug payloads, reports, and subscription state are ignored by Git.
-
+Use `--check` for a read-only readiness check and `--max-batches N` for a bounded run. The translator uses only the ChatGPT-authenticated Codex subscription. Before each new query, it freshly queries OpenAI's official frontier metadata and the live subscription catalog, verifies that exact model with `xhigh`, and records the resolution. It stops if discovery fails, the frontier changes, or the current model is unavailable. It never selects a model from a bundled/local catalog or loads paid API credentials. See the root README for live-discovery requirements. `Working Files`, `Output`, debug payloads, reports, and subscription state are ignored by Git.

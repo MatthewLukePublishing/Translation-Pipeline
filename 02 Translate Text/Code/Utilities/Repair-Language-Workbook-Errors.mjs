@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import XLSX from "xlsx";
+import XLSX from "../../../Code/SheetJsNode.mjs";
 import atomicFiles from "../../../Code/AtomicFiles.cjs";
 import transactionalFiles from "../../../Code/TransactionalFileReplacement.cjs";
 import { buildContentGroups, compositeFromRows } from "../ContentGroups.mjs";
@@ -237,4 +237,3 @@ try {
 }
 for (const { transaction } of committed) discardReplacementBackupSync(transaction);
 console.log(`REPAIR_COMPLETE|files=${plans.length}|cells=${totalChanges}|archive=${cli.archive}`);
-

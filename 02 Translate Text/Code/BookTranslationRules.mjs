@@ -120,6 +120,12 @@ export function loadBookTranslationInstructionSnapshot({
 }
 
 export function configuredPattern(rule) {
+  if (rule.id === "official_unit_type_abbreviation") {
+    // A headquarters qualifier belongs to the same official unit name as its
+    // abbreviated type. Lock the whole phrase before generic glossary matching.
+    const qualifier = "(?:\\bHeadquarters(?:\\s+and\\s+(?:Headquarters|Service|Support))?\\s+)?";
+    return new RegExp(`${qualifier}(?:${rule.pattern})`, rule.flags);
+  }
   return new RegExp(rule.pattern, rule.flags);
 }
 

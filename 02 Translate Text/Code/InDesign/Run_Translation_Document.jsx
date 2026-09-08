@@ -117,7 +117,7 @@
           }
         }
       } catch (error) {
-        throw new Error("Could not update ICML link " + links[index].name + ": " + error);
+        throw new Error("Could not update local translation link " + links[index].name + ": " + error);
       }
     }
     return { updated: updated, remaining: remaining, total: links.length };
@@ -136,7 +136,7 @@
   }
 
   function runPrepare(document, exportAfterRelink) {
-    if (document.modified) throw new Error("Copied document opened with unsaved changes before relinking.");
+    if (document.modified) return "CHECKPOINT_REQUIRED|document=" + document.fullName.fsName;
     var textFolder = new Folder(TEXT_FOLDER_PATH);
     if (!textFolder.exists) throw new Error("Missing local Text folder: " + TEXT_FOLDER_PATH);
     var localFiles = [];
@@ -264,7 +264,7 @@
 }
 
   function runRefresh(document) {
-    if (document.modified) throw new Error("Prepared document has unsaved changes before link refresh.");
+    if (document.modified) return "CHECKPOINT_REQUIRED|document=" + document.fullName.fsName;
     var refresh = updateIcmlLinksBatch(document);
     if (refresh.updated) document.save();
     if (document.modified) throw new Error("Document remained modified after link refresh batch save.");
@@ -276,14 +276,34 @@
   }
 
   var opened = null;
+  var originalInteraction = app.scriptPreferences.userInteractionLevel;
   try {
-    if (app.documents.length !== 0) throw new Error("InDesign must have no open documents before an automated Step 2 operation.");
+    app.scriptPreferences.userInteractionLevel = UserInteractionLevels.NEVER_INTERACT;
     var documentFile = new File(DOCUMENT_PATH);
     if (!documentFile.exists) throw new Error("Missing InDesign document: " + DOCUMENT_PATH);
-    opened = app.open(documentFile, false);
+    if (ACTION === "open") {
+      if (app.documents.length !== 0 || app.backgroundTasks.length) throw new Error("InDesign must be idle with no open documents before Step 2.");
+      opened = app.open(documentFile, false);
+      if (pathKey(opened.fullName.fsName) !== pathKey(documentFile.fsName)) throw new Error("InDesign opened an unexpected document.");
+      return "OPENED|document=" + opened.fullName.fsName;
+    }
+    if (app.documents.length !== 1) throw new Error("Expected only the isolated Step 2 document to be open.");
+    opened = app.documents[0];
     if (pathKey(opened.fullName.fsName) !== pathKey(documentFile.fsName)) {
       throw new Error("InDesign opened an unexpected document.");
     }
+    if (app.backgroundTasks.length) throw new Error("InDesign background work is active; no Step 2 mutation was started.");
+    if (ACTION === "checkpoint") {
+      if (opened.modified) opened.save();
+      if (opened.modified) throw new Error("Document remains modified after checkpoint save.");
+      return "CHECKPOINT_SAVED|document=" + DOCUMENT_PATH;
+    }
+    if (ACTION === "close") {
+      if (opened.modified) throw new Error("Refusing to close a modified Step 2 document.");
+      opened.close(SaveOptions.NO);
+      return "CLOSED|document=" + DOCUMENT_PATH;
+    }
+    if (opened.links.length > 10000) throw new Error("Document exceeds the bounded link audit limit.");
     var result;
     if (ACTION === "audit") result = runAudit(opened);
     else if (ACTION === "prepare") result = runPrepare(opened, true);
@@ -291,11 +311,11 @@
     else if (ACTION === "import") result = runImport(opened);
     else if (ACTION === "refresh") result = runRefresh(opened);
     else throw new Error("Unsupported Step 2 InDesign action: " + ACTION);
-    opened.close(SaveOptions.NO);
-    opened = null;
     return result;
   } catch (error) {
-    try { if (opened && opened.isValid) opened.close(SaveOptions.NO); } catch (_) {}
+    // Preserve the isolated copy for recovery; never discard an unsaved edit.
     return "ERROR|" + String(error).replace(/[\r\n]+/g, " ");
+  } finally {
+    app.scriptPreferences.userInteractionLevel = originalInteraction;
   }
 }());

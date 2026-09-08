@@ -22,6 +22,7 @@ secrets*.json
 *.journal.json
 *.transaction.json
 *.lock.json
+*.lock
 logs/
 reports/
 state/
@@ -91,4 +92,3 @@ Desktop.ini
 .idea/
 .vscode/
 *.swp
-

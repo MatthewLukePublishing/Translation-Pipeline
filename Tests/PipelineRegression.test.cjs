@@ -173,7 +173,7 @@ test("Stage 4 mutates only pending Portuguese cells", async () => {
   }
 });
 
-test("QA refuses a changed workbook after import instead of preserving imported status", () => {
+test("QA revalidates edited workbooks but invalidates old import and finalization evidence", () => {
   const job = fs.mkdtempSync(path.join(os.tmpdir(), "translate-imported-qa-"));
   try {
     const headers = [
@@ -202,6 +202,7 @@ test("QA refuses a changed workbook after import instead of preserving imported 
       workbook: { dataRowCount: 1, contentIdCount: 1 },
       qa: { status: "passed", hashes: { outputWorkbookSha256: importedHash } },
       import: { workbookSha256: importedHash },
+      layoutFinalization: { documentSha256: "old-document" },
     }, null, 2)}\n`, "utf8");
     writeWorkbook(outputPath, [headers, ["Body", "Modifié", "id-1", "Modifié"]]);
     const validator = path.join(
@@ -212,8 +213,72 @@ test("QA refuses a changed workbook after import instead of preserving imported 
       encoding: "utf8",
       windowsHide: true,
     });
-    assert.notEqual(run.status, 0);
-    assert.match(`${run.stdout}\n${run.stderr}`, /changed after it was imported.*Re-import is required/is);
+    assert.equal(run.status, 0, run.stderr);
+    let manifest = JSON.parse(fs.readFileSync(path.join(job, "job_manifest.json")));
+    assert.equal(manifest.status, "ready_for_import");
+    assert.equal(manifest.qa.hashes.outputWorkbookSha256, sha256(outputPath));
+    assert.equal(manifest.import, undefined);
+    assert.equal(manifest.layoutFinalization, undefined);
+    assert.equal(manifest.invalidatedImport.import.workbookSha256, importedHash);
+    assert.equal(manifest.invalidatedImport.layoutFinalization.documentSha256, "old-document");
+    manifest.status = "imported";
+    manifest.import = { workbookSha256: sha256(outputPath), payloadSha256: manifest.qa.hashes.importPayloadSha256 };
+    fs.writeFileSync(path.join(job, "job_manifest.json"), JSON.stringify(manifest));
+    const unchanged = spawnSync(process.execPath, [validator, "--job", job], { cwd: ROOT, encoding: "utf8", windowsHide: true });
+    assert.equal(unchanged.status, 0, unchanged.stderr);
+    manifest = JSON.parse(fs.readFileSync(path.join(job, "job_manifest.json")));
+    assert.equal(manifest.status, "imported", "the exact already-imported payload remains resumable");
+    writeWorkbook(outputPath, [headers, ["Body", "", "id-1", ""]]);
+    const invalid = spawnSync(process.execPath, [validator, "--job", job], { cwd: ROOT, encoding: "utf8", windowsHide: true });
+    assert.notEqual(invalid.status, 0);
+    manifest = JSON.parse(fs.readFileSync(path.join(job, "job_manifest.json")));
+    assert.equal(manifest.status, "qa_failed");
+    assert.equal(manifest.import, undefined, "a failed edited workbook cannot retain imported status");
+  } finally {
+    fs.rmSync(job, { recursive: true, force: true });
+  }
+});
+
+test("journaled re-import accepts the exact previous output but never overwrites later ICML edits", async () => {
+  const job = fs.mkdtempSync(path.join(os.tmpdir(), "translate-reimport-"));
+  try {
+    const { fnv1a32Utf16 } = await import(pathToFileURL(path.join(ROOT, "02 Translate Text/Code/ContentFingerprint.mjs")).href);
+    const workspace = path.join(job, "edition"), textFolder = path.join(workspace, "Text");
+    fs.mkdirSync(textFolder, { recursive: true });
+    const icml = path.join(textFolder, "story.icml");
+    const original = '<ParagraphStyleRange id="p1"><Content id="id-1">Source</Content></ParagraphStyleRange>';
+    fs.writeFileSync(icml, original);
+    const headers = ["ParagraphStyleRange id", "ParagraphStyleRange content", "Content tag", "Content content"];
+    const output = path.join(job, "output/content_import.xlsx");
+    writeWorkbook(path.join(job, "input/content_export.xlsx"), [headers, ["p1", "Source", "id-1", "Source"]]);
+    writeWorkbook(output, [headers, ["p1", "Cible", "id-1", "Cible"]]);
+    fs.writeFileSync(path.join(job, "job_config.json"), JSON.stringify({
+      jobId: "fixture", jobPath: job, book: "DEMO", targetLanguage: "French", paths: { outputWorkbook: output },
+      productionWorkspace: { root: workspace, textFolder, documentPath: path.join(workspace, "book.indd") },
+    }));
+    fs.writeFileSync(path.join(job, "job_manifest.json"), JSON.stringify({
+      jobId: "fixture", status: "translated", workbook: { dataRowCount: 1, contentIdCount: 1 },
+      icmlFiles: [{ path: icml, sha256: sha256(icml), fingerprint: fnv1a32Utf16(original) }],
+    }));
+    function run(name) {
+      return spawnSync(process.execPath, [path.join(ROOT, "02 Translate Text/Code", name), "--job", job], { cwd: ROOT, encoding: "utf8", windowsHide: true });
+    }
+    for (const target of ["Cible", "Corrigé"]) {
+      writeWorkbook(output, [headers, ["p1", target, "id-1", target]]);
+      const qa = run("Validation/Validate_Translation_Job.js");
+      assert.equal(qa.status, 0, qa.stderr);
+      const imported = run("Import_Translation_Workbook.mjs");
+      assert.equal(imported.status, 0, imported.stderr);
+      assert.ok(fs.readFileSync(icml, "utf8").includes(`>${target}</Content>`));
+    }
+    const userEdit = fs.readFileSync(icml, "utf8").replace("Corrigé", "User edit");
+    fs.writeFileSync(icml, userEdit);
+    writeWorkbook(output, [headers, ["p1", "Nouvelle cible", "id-1", "Nouvelle cible"]]);
+    assert.equal(run("Validation/Validate_Translation_Job.js").status, 0);
+    const blocked = run("Import_Translation_Workbook.mjs");
+    assert.notEqual(blocked.status, 0);
+    assert.match(blocked.stderr, /differs from the previous import/);
+    assert.equal(fs.readFileSync(icml, "utf8"), userEdit);
   } finally {
     fs.rmSync(job, { recursive: true, force: true });
   }

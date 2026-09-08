@@ -12,6 +12,8 @@ param(
     [string]$EditionName,
     [string]$InteriorsPath,
     [string]$WorkspacePath,
+    [string]$SourcePackagePath,
+    [switch]$DeferRelink,
     [string]$ProductsRoot,
     [string]$LayoutSettingsPath,
     [ValidateSet('CodexSubscription')]
@@ -199,10 +201,13 @@ function Invoke-SubscriptionTranslator {
         if ($script:maxBatchesSpecified -and $MaxBatches -gt 0) {
             $arguments += @('--max-batches', [string]$MaxBatches)
         }
-        & $codexNodePath @arguments
+        # Keep progress out of this function's Boolean return pipeline. Otherwise
+        # captured output both hides live progress and turns a paused $false into
+        # a truthy array, incorrectly sending an incomplete job into validation.
+        & $codexNodePath @arguments | ForEach-Object { Write-Host $_ }
         $exitCode = $LASTEXITCODE
         if ($exitCode -eq 2) {
-            Write-Output "TRANSLATION_PAUSED|job=$JobPath"
+            Write-Host "TRANSLATION_PAUSED|job=$JobPath"
             return $false
         }
         if ($exitCode -ne 0) { throw "Codex subscription translator failed with exit code $exitCode." }
@@ -512,6 +517,8 @@ function Initialize-ProductionWorkspace {
         ProductsRoot = Get-ConfiguredProductsRoot
     }
     if ($InteriorsPath) { $arguments.InteriorsPath = $InteriorsPath }
+    if ($SourcePackagePath) { $arguments.SourcePackagePath = $SourcePackagePath }
+    if ($DeferRelink) { $arguments.DeferRelink = $true }
     & $workspacePreparerPath @arguments
 }
 
@@ -520,6 +527,9 @@ function Invoke-ProductionImport {
     if (-not $job.Config.productionWorkspace) {
         throw 'Automated import is available only for a prepared production workspace. Use the Scripts-panel importer for a standard job.'
     }
+    # Validate the exact current workbook before deciding whether this is only
+    # a resumable link refresh or a new, required ICML import.
+    Invoke-NodeScript -Script $validatorPath -JobPath $job.JobPath
     $manifest = Read-JsonFile -Path (Join-Path $job.JobPath 'job_manifest.json') -Label 'job manifest'
     if ([string]$manifest.status -notin @('ready_for_import', 'imported') -or [string]$manifest.qa.status -ne 'passed') {
         throw "The production job has not passed Step 2 validation or reached resumable import state. Current status: $($manifest.status)"
@@ -576,6 +586,7 @@ function Invoke-ProductionFinalize {
         -not ([string]$_.language).Equals([string]$job.Config.targetLanguage, [StringComparison]::OrdinalIgnoreCase)
     })
     if ($overflowCount -ne 0) { throw "Layout finalization found $overflowCount overset stories. Adjust only the affected style families, then rerun Finalize." }
+    if ([string]$audit.tableAudit.status -ne 'complete' -or [int]$audit.overflow.cellCount -ne 0) { throw 'Layout finalization requires a complete table-cell audit without clipped text.' }
     if ($missingLinkCount -ne 0 -or $outdatedLinkCount -ne 0) {
         throw "Layout finalization found $missingLinkCount missing and $outdatedLinkCount outdated links. Relink local Text/Diagrams assets, then rerun Finalize."
     }
@@ -587,7 +598,9 @@ function Invoke-ProductionFinalize {
         completedAt = [DateTime]::UtcNow.ToString('o')
         settingsPath = $resolvedSettings
         auditReport = $auditReportPath
+        auditSha256 = (Get-FileHash -LiteralPath $auditReportPath -Algorithm SHA256).Hash
         overflowStories = 0
+        overflowCells = 0
         languageMismatchStyles = 0
         missingLinks = 0
         outdatedLinks = 0
@@ -655,6 +668,41 @@ function Invoke-ProductionExport {
     Write-Output "PRODUCTION_WORKSPACE_EXPORTED|workspace=$($job.Config.productionWorkspace.root)|document=$($job.Config.productionWorkspace.documentPath)|job=$($job.JobPath)|relinked=true"
 }
 
+function Assert-ProductionCompletionEvidence {
+    param(
+        [Parameter(Mandatory)] $Manifest,
+        [Parameter(Mandatory)] [string]$DocumentPath,
+        [Parameter(Mandatory)] [string]$LayoutAuditPath,
+        [Parameter(Mandatory)] [string]$WorkbookPath
+    )
+    if ([string]$Manifest.qa.status -ne 'passed') { throw 'Completion requires passed translation QA.' }
+    $expected = @(
+        @{ Path = $DocumentPath; Hash = [string]$Manifest.layoutFinalization.documentSha256; Label = 'finalized document' }
+        @{ Path = $LayoutAuditPath; Hash = [string]$Manifest.layoutFinalization.auditSha256; Label = 'final layout audit' }
+        @{ Path = $WorkbookPath; Hash = [string]$Manifest.import.workbookSha256; Label = 'imported workbook' }
+        @{ Path = $WorkbookPath; Hash = [string]$Manifest.qa.hashes.outputWorkbookSha256; Label = 'QA workbook' }
+    )
+    foreach ($item in $expected) {
+        if ($item.Hash -notmatch '^[A-Fa-f0-9]{64}$' -or -not (Test-Path -LiteralPath $item.Path -PathType Leaf)) {
+            throw "Missing completion evidence for $($item.Label). Import/finalize the current files before completing."
+        }
+        $actualHash = (Get-FileHash -LiteralPath $item.Path -Algorithm SHA256).Hash
+        if (-not $item.Hash.Equals($actualHash, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "The $($item.Label) changed after validation. Completion is blocked until the current files are imported/finalized."
+        }
+    }
+}
+
+function Resolve-CompletionSubscriptionModel {
+    param([Parameter(Mandatory)] [string]$RecordedModel, [Parameter(Mandatory)] [string]$RecordedEffort)
+    if ($RecordedEffort -ne 'xhigh') { throw 'Completion requires xhigh reasoning for the recorded job.' }
+    $resolution = Resolve-LatestSubscriptionModel
+    if ([string]$resolution.model -ne $RecordedModel -or [string]$resolution.reasoningEffort -ne 'xhigh') {
+        throw 'The official frontier changed during the job. Completion is blocked; no older-model fallback is permitted.'
+    }
+    return $resolution
+}
+
 function Complete-ProductionJob {
     $job = Get-ActiveJob
     if (-not $job.Config.productionWorkspace) { throw 'Use -Action Archive for a standard job.' }
@@ -667,8 +715,10 @@ function Complete-ProductionJob {
     $productionWorkspace = Get-ValidatedProductionWorkspace -Config $job.Config
     $documentPath = $productionWorkspace.DocumentPath
     $layoutAuditPath = Join-Path $job.JobPath 'reports\layout_audit_final.json'
+    Assert-ProductionCompletionEvidence -Manifest $manifest -DocumentPath $documentPath -LayoutAuditPath $layoutAuditPath -WorkbookPath (Join-Path $job.JobPath 'output\content_import.xlsx')
     $layoutAudit = Read-JsonFile -Path $layoutAuditPath -Label 'final layout audit'
     if ([int]$layoutAudit.overflow.storyCount -ne 0) { throw 'The final layout audit contains overset stories.' }
+    if ([string]$layoutAudit.tableAudit.status -ne 'complete' -or [int]$layoutAudit.overflow.cellCount -ne 0) { throw 'The final layout audit must completely check table cells without clipped text.' }
     if ([int]$layoutAudit.linkStatus.missing -ne 0 -or [int]$layoutAudit.linkStatus.outdated -ne 0) {
         throw 'The final layout audit contains missing or outdated links.'
     }
@@ -680,6 +730,9 @@ function Complete-ProductionJob {
     if ($job.Config.protectedSourceRules -and -not (Test-Path -LiteralPath ([string]$job.Config.protectedSourceContentManifest) -PathType Leaf)) {
         throw 'The protected-source content manifest is missing.'
     }
+    $workspaceManifestPath = [string]$job.Config.productionWorkspace.workspaceManifest
+    if (-not $workspaceManifestPath) { throw 'The configured workspace manifest path is missing.' }
+    $workspaceManifest = Read-JsonFile -Path $workspaceManifestPath -Label 'translation workspace manifest'
     $documentSha256 = (Get-FileHash -LiteralPath $documentPath -Algorithm SHA256).Hash
     if ($manifestStatus -eq 'complete') {
         $completedAt = [string]$manifest.completion.completedAt
@@ -689,18 +742,18 @@ function Complete-ProductionJob {
             throw 'The completed job manifest is incomplete or its document hash no longer matches the production INDD.'
         }
     } else {
+        $completionModelResolution = Resolve-CompletionSubscriptionModel -RecordedModel ([string]$job.Config.model) -RecordedEffort ([string]$job.Config.reasoningEffort)
         $completedAt = [DateTime]::UtcNow.ToString('o')
         $manifest.status = 'complete'
         $manifest.updatedAt = $completedAt
         $manifest | Add-Member -NotePropertyName completion -NotePropertyValue ([ordered]@{
             completedAt = $completedAt
             documentSha256 = $documentSha256
+            modelResolution = $completionModelResolution
         }) -Force
         Write-Utf8Json -Path $manifestPath -Value $manifest
     }
 
-    $workspaceManifestPath = Join-Path ([string]$job.Config.productionWorkspace.root) 'Translation Workspace.json'
-    $workspaceManifest = Read-JsonFile -Path $workspaceManifestPath -Label 'translation workspace manifest'
     $workspaceManifest.status = 'complete'
     $workspaceManifest | Add-Member -NotePropertyName completedAt -NotePropertyValue $completedAt -Force
     $workspaceManifest | Add-Member -NotePropertyName outputDocumentSha256 -NotePropertyValue $documentSha256 -Force

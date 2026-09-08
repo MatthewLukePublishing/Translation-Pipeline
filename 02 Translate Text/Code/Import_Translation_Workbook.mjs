@@ -5,7 +5,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import XLSX from "xlsx";
+import XLSX from "../../Code/SheetJsNode.mjs";
 import transactionalFiles from "../../Code/TransactionalFileReplacement.cjs";
 import { fnv1a32Utf16 } from "./ContentFingerprint.mjs";
 import { normalizeContentId } from "./ContentIds.mjs";
@@ -176,6 +176,23 @@ if (!expectedPayload || expectedPayload !== payload.fingerprint) {
 
 const expectedFiles = manifest.icmlFiles || [];
 if (!expectedFiles.length || expectedFiles.length > 5000) throw new Error(`Unexpected manifest ICML file count: ${expectedFiles.length}.`);
+const priorImport = manifest.invalidatedImport?.import;
+const priorFiles = new Map();
+if (priorImport) {
+  if (priorImport.engine !== "node-journaled-xlsx-import" ||
+      !Array.isArray(priorImport.icmlFiles) || priorImport.icmlFiles.length !== expectedFiles.length ||
+      !/^[A-F0-9]{64}$/i.test(priorImport.icmlAfterSetSha256 || "")) {
+    throw new Error("Previous import evidence is incomplete; re-import blocked.");
+  }
+  const expectedPaths = new Set(expectedFiles.map(file => path.resolve(file.path).toLowerCase()));
+  for (const file of priorImport.icmlFiles) {
+    const key = path.resolve(String(file.path || "")).toLowerCase();
+    if (!expectedPaths.has(key) || priorFiles.has(key) || !/^[A-F0-9]{64}$/i.test(file.afterSha256 || "")) {
+      throw new Error("Previous import has invalid, duplicate, or unexpected ICML evidence.");
+    }
+    priorFiles.set(key, file);
+  }
+}
 const seenPaths = new Set();
 const touched = new Set();
 const idLocations = new Map();
@@ -191,13 +208,13 @@ for (const expected of expectedFiles) {
   seenPaths.add(pathKey);
   const originalText = fs.readFileSync(filePath, "utf8").replace(/^\uFEFF/, "");
   const currentFingerprint = fnv1a32Utf16(originalText);
-  if (currentFingerprint !== String(expected.fingerprint || "").toUpperCase()) {
+  if (!priorImport && currentFingerprint !== String(expected.fingerprint || "").toUpperCase()) {
     throw new Error(`ICML changed after export; import blocked: ${filePath}`);
   }
-  const expectedSha256 = String(expected.sha256 || "").toUpperCase();
+  const expectedSha256 = String(priorImport ? priorFiles.get(pathKey).afterSha256 : (expected.sha256 || "")).toUpperCase();
   const currentSha256 = sha256Text(originalText);
   if (!expectedSha256 || expectedSha256 !== currentSha256) {
-    throw new Error(`ICML SHA-256 differs from the export manifest; import blocked: ${filePath}`);
+    throw new Error(`ICML SHA-256 differs from the ${priorImport ? "previous import" : "export"} manifest; import blocked: ${filePath}`);
   }
   const contentPattern = /<Content\b([^>]*\bid\s*=\s*"([^"]+)"[^>]*?)(\/>|>([\s\S]*?)<\/Content>)/g;
   const updatedText = originalText.replace(contentPattern, (full, attrs, rawId, closing, innerContent) => {
@@ -236,6 +253,9 @@ const filesModified = plans.filter((plan) => plan.changed).length;
 const completedAt = new Date().toISOString();
 const icmlBeforeSetSha256 = sha256IcmlSet(plans, "originalSha256", textRoot);
 const icmlAfterSetSha256 = sha256IcmlSet(plans, "updatedSha256", textRoot);
+if (priorImport && icmlBeforeSetSha256 !== priorImport.icmlAfterSetSha256.toUpperCase()) {
+  throw new Error("ICML set does not match the previous successful import; re-import blocked.");
+}
 const reportData = {
   completedAt,
   jobId: config.jobId,

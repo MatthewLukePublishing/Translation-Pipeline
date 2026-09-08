@@ -60,10 +60,14 @@ test("the public commit contains only maintained source and synthetic examples",
 
 test("tracked text contains no credentials or personal workstation data", () => {
   const forbidden = [
-    ["private key", /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/i],
+    ["private key", /-----BEGIN (?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----/i],
     ["OpenAI secret key", /\bsk-[A-Za-z0-9_-]{20,}\b/],
     ["GitHub token", /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b|\bgithub_pat_[A-Za-z0-9_]{20,}\b/i],
     ["AWS access key", /\bAKIA[0-9A-Z]{16}\b/],
+    ["JWT", /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/],
+    ["Google OAuth access token", /\bya29\.[A-Za-z0-9_-]{20,}\b/],
+    ["Google API key", /\bAIza[A-Za-z0-9_-]{35}\b/],
+    ["literal bearer credential", /\bBearer\s+[A-Za-z0-9._~-]{24,}/i],
     ["credential in URL", /https?:\/\/[^\s/:@]+:[^\s/@]+@/i],
     ["personal user profile", /C:\\Users\\(?!Public(?:\\|$))[^\\\s]+/i],
     ["personal account name", new RegExp(`\\b${["jo", "hnl"].join("")}\\b`, "i")],
@@ -76,10 +80,11 @@ test("tracked text contains no credentials or personal workstation data", () => 
     if (relativePath.replace(/\\/g, "/") === "README.md") {
       source = source.split(allowedAccessContract).join("");
     }
-    assert.doesNotMatch(source, /[A-Z]:\\Google Drive\\Publishing\\(?:Products|Code\\Programs)/i,
+    assert.ok(!/[A-Z]:\\Google Drive\\Publishing\\(?:Products|Code\\Programs)/i.test(source),
       `Private production path is present in ${relativePath}`);
     for (const [label, pattern] of forbidden) {
-      assert.doesNotMatch(source, pattern, `${label} pattern is present in ${relativePath}`);
+      // Report the location/category only; never echo a credential-bearing source string.
+      assert.ok(!pattern.test(source), `${label} pattern is present in ${relativePath}`);
     }
   }
 });

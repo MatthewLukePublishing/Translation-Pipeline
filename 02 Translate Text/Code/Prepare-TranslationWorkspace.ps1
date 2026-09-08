@@ -5,6 +5,8 @@ param(
     [Parameter(Mandatory)] [string]$EditionName,
     [string]$GlossaryProfile,
     [string]$InteriorsPath,
+    [string]$SourcePackagePath,
+    [switch]$DeferRelink,
     [string]$ProductsRoot,
     [ValidateSet('CodexSubscription')] [string]$Provider = 'CodexSubscription',
     [string]$Model = 'latest',
@@ -203,6 +205,27 @@ if (Test-Path -LiteralPath $workspaceRoot) { throw "Translation workspace alread
 $originDocument = Assert-PathWithin -Path (Join-Path $programRoot ([string]$bookConfig.originDocument)) -Parent $programRoot -Label 'Origin INDD'
 $originWorkbook = Assert-PathWithin -Path (Join-Path $programRoot ([string]$bookConfig.originWorkbook)) -Parent $programRoot -Label 'Origin workbook'
 $originArchive = Assert-PathWithin -Path (Join-Path $programRoot ([string]$bookConfig.originArchive)) -Parent $programRoot -Label 'Origin ICML archive'
+if ($SourcePackagePath) {
+    $sourcePackageRoot = Assert-PathWithin -Path $SourcePackagePath -Parent $productsRoot -Label 'Current source package'
+    $verifier = Join-Path $PSScriptRoot 'Verify-SourcePackage.mjs'
+    $verifiedOutput = & $codexNode $verifier $sourcePackageRoot
+    if ($LASTEXITCODE -ne 0) { throw 'Current source package verification failed.' }
+    $verifiedPackage = ($verifiedOutput -join [Environment]::NewLine) | ConvertFrom-Json
+    $null = Assert-PathWithin -Path ([string]$verifiedPackage.originalDocument) -Parent $resolvedInteriors -Label 'Current source document'
+    if ([IO.Path]::GetFileName([string]$verifiedPackage.originalDocument) -ne [IO.Path]::GetFileName($originDocument)) {
+        throw 'The source package document does not match the mapped book source.'
+    }
+    $originDocument = Join-Path $sourcePackageRoot ([string]$verifiedPackage.document)
+    $originWorkbook = Join-Path $sourcePackageRoot 'content_export.xlsx'
+    $originArchive = Join-Path $sourcePackageRoot 'Text.zip'
+} else {
+    $currentEnglishCandidate = Join-Path (Join-Path $resolvedInteriors 'English') ([IO.Path]::GetFileName($originDocument))
+    if ((Test-Path -LiteralPath $currentEnglishCandidate -PathType Leaf) -and
+        (Get-FileHash -LiteralPath $currentEnglishCandidate -Algorithm SHA256).Hash -ne
+        (Get-FileHash -LiteralPath $originDocument -Algorithm SHA256).Hash) {
+        throw 'The current English document differs from the mapped Origin snapshot. Export a fresh source package and supply -SourcePackagePath.'
+    }
+}
 $resolvedLayoutProfile = ''
 if ($layoutProfile) {
     $layoutProfileCandidate = if ([IO.Path]::IsPathRooted($layoutProfile)) { $layoutProfile } else { Join-Path $programRoot $layoutProfile }
@@ -279,6 +302,9 @@ if (-not $icmlFiles.Count) { throw "No ICML files were extracted to $textFolder"
 Copy-Item -LiteralPath $acronymSource -Destination (Join-Path $jobPath 'glossary\acronyms.json')
 Copy-Item -LiteralPath $wordsSource -Destination (Join-Path $jobPath 'glossary\words.json')
 Copy-Item -LiteralPath $originWorkbook -Destination (Join-Path $jobPath 'input\content_export.xlsx')
+if ($SourcePackagePath) {
+    Copy-Item -LiteralPath (Join-Path $sourcePackageRoot 'source_package.json') -Destination (Join-Path $jobPath 'input\source_package.json')
+}
 $translationInstructionsSnapshot = ''
 if ($translationInstructionsSource) {
     $translationInstructionsSnapshot = Join-Path $jobPath 'input\book_translation_instructions.json'
@@ -380,6 +406,15 @@ $jobConfig = [ordered]@{
 $jobConfig['protectedSourceRules'] = $protectedRules
 $jobConfig['protectedSourceContentManifest'] = $protectedManifestPath
 $jobConfig['layoutProfile'] = $resolvedLayoutProfile
+if ($SourcePackagePath) {
+    $jobConfig['sourcePackage'] = [ordered]@{
+        path = $sourcePackageRoot
+        manifestSnapshot = Join-Path $jobPath 'input\source_package.json'
+        manifestSha256 = (Get-FileHash -LiteralPath (Join-Path $jobPath 'input\source_package.json') -Algorithm SHA256).Hash
+        originalDocument = [string]$verifiedPackage.originalDocument
+        originalDocumentSha256 = [string]$verifiedPackage.originalDocumentSha256
+    }
+}
 if ($translationInstructionsSnapshot) {
     $jobConfig['bookTranslationInstructions'] = [ordered]@{
         moduleId = [string]$translationInstructionsModule.moduleId
@@ -479,7 +514,9 @@ try {
     $workspaceManifest.exportWorkbookSha256 = (Get-FileHash -LiteralPath (Join-Path $jobPath 'input\content_export.xlsx') -Algorithm SHA256).Hash
     Write-Utf8Json -Path $workspaceManifestPath -Value $workspaceManifest
 
-    try {
+    if ($DeferRelink) {
+        Write-Output "PRODUCTION_WORKSPACE_EXPORTED|workspace=$workspaceRoot|document=$documentPath|job=$jobPath|profile=$effectiveProfile|icml=$($icmlFiles.Count)|relinked=false"
+    } else { try {
         & $inDesignRunner -Action Relink -DocumentPath $documentPath -TextFolderPath $textFolder -JobPath $jobPath
         $workspaceManifest.status = 'exported'
         $workspaceManifest.relinkedAt = [DateTime]::UtcNow.ToString('o')
@@ -493,7 +530,7 @@ try {
         Write-Utf8Json -Path $workspaceManifestPath -Value $workspaceManifest
         Write-Warning 'The Origin package is ready and may be translated, but the copied INDD still needs its local ICML relink after the open InDesign documents are saved and closed.'
         Write-Output "PRODUCTION_WORKSPACE_EXPORTED|workspace=$workspaceRoot|document=$documentPath|job=$jobPath|profile=$effectiveProfile|icml=$($icmlFiles.Count)|relinked=false"
-    }
+    } }
     $completedPreparation = Complete-WorkspacePreparationTransaction -JournalPath $workspaceTransactionPath
     $prepareTransactionStarted = $false
     Write-Output "WORKSPACE_PREPARATION_TRANSACTION_OK|id=$($completedPreparation.TransactionId)"

@@ -669,18 +669,19 @@ function assertChatGptLogin() {
   }
 }
 
-async function resolveSubscriptionModel() {
-  if (!fs.existsSync(MODEL_RESOLVER)) throw new Error(`Missing latest-model resolver: ${MODEL_RESOLVER}`);
-  if (!fs.existsSync(CODEX_CLI_JS)) throw new Error(`Missing official Codex CLI: ${CODEX_CLI_JS}`);
-  const resolver = await import(pathToFileURL(MODEL_RESOLVER).href);
-  const resolution = await resolver.resolveLatestSubscriptionModel({
-    nodePath: CODEX_NODE_EXE,
-    cliPath: CODEX_CLI_JS,
-  });
-  if (resolution.reasoningEffort !== REASONING_EFFORT) {
-    throw new Error(`Latest Codex model does not satisfy required reasoning effort '${REASONING_EFFORT}'.`);
+async function resolveSubscriptionModel(expectedModel) {
+  try {
+    const resolver = await import(pathToFileURL(MODEL_RESOLVER).href);
+    return await resolver.resolveLatestSubscriptionModel({
+      nodePath: CODEX_NODE_EXE, cliPath: CODEX_CLI_JS,
+      expectedModel, reasoningEffort: REASONING_EFFORT,
+    });
+  } catch (error) {
+    if (error?.code === "LATEST_MODEL_POLICY_FAILURE") throw error;
+    const failure = new Error("Fresh model discovery failed; the diagram run must stop.");
+    failure.code = "LATEST_MODEL_POLICY_FAILURE";
+    throw failure;
   }
-  return resolution;
 }
 
 async function translateDiagramOnce(scanPayload, statePaths) {
@@ -706,8 +707,15 @@ async function translateDiagramOnce(scanPayload, statePaths) {
   writeJson(statePaths.codexSchemaJson, buildResponseSchema(expectedIds));
   writeTextAtomic(statePaths.codexPromptText, prompt);
   let lastErr;
+  const queryResolutions = [];
 
   for (let attempt = 1; attempt <= MAX_SUBSCRIPTION_RETRIES; attempt++) {
+    // Resolve outside the retry catch: a policy failure must stop the whole run.
+    const queryModelResolution = await resolveSubscriptionModel(MODEL);
+    queryResolutions.push({ attempt, ...queryModelResolution });
+    writeJson(statePaths.codexRequestJson, {
+      model: MODEL, reasoningEffort: REASONING_EFFORT, queries: queryResolutions,
+    });
     try {
       removeFileIfExists(statePaths.codexResponseJson);
       const run = runCodex([
@@ -1218,6 +1226,7 @@ function makePerFilePaths(tempRoot, stem) {
     codexPromptText: path.join(codexDir, `${stem}.prompt.txt`),
     codexSchemaJson: path.join(codexDir, `${stem}.schema.json`),
     codexResponseJson: path.join(codexDir, `${stem}.response.json`),
+    codexRequestJson: path.join(codexDir, `${stem}.request.json`),
   };
 }
 
@@ -1423,6 +1432,8 @@ async function processFileWithRetry({
       return true;
     } catch (err) {
       lastErr = err;
+
+      if (err?.code === "LATEST_MODEL_POLICY_FAILURE") throw err;
 
       // If the source .ai file is genuinely missing on disk, retrying with
       // a fresh Illustrator session won't help — and tearing down a healthy

@@ -1,6 +1,11 @@
 "use strict";
 const crypto=require("node:crypto");
 const {LANGUAGES}=require("./TranslationEditorialRules.cjs");
+// Manual InDesign GREP instructions must be paste-ready. NNBSP is a label,
+// never replacement syntax. In Change to, use \x{202F} for U+202F in
+// fr_punctuation, fr_open_quote and fr_close_quote, and $1 —\x{202F}
+// for fr_em_dash. The JavaScript strings below already contain that actual
+// Unicode character; do not insert the letters "NNBSP" into manuscript text.
 const H=String.raw`[ \x{00A0}\x{2009}\x{202F}]+`;
 const common=[
   {id:"fr_punctuation",language:"French",source:"Sheet1!D35/G35, line 1",find:String.raw`[ \t\x{00A0}\x{2009}]+(?=[;:!?%])`,change:"\u202f"},

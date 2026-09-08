@@ -22,6 +22,8 @@ import { validateWithTargetedRecheck } from "./BatchRecheck.mjs";
 import { glossaryPattern } from "./GlossaryPatterns.mjs";
 import { renderGlossaryTableRow } from "./GlossaryTable.mjs";
 import { applyLanguagePostprocessors } from "./LanguagePostprocessors.mjs";
+import editorialRules from "../../Code/TranslationEditorialRules.cjs";
+import {loadPanelManagedContent,preservePanelManagedContent} from './PanelManagedReferences.mjs';
 import {
   compileGlossaryEntries,
   glossaryEntryApplies,
@@ -46,6 +48,7 @@ const DEFAULT_BATCH_MAX_CHARS = 24000;
 const DEFAULT_BATCH_MAX_GROUPS = 100;
 const DEFAULT_BATCH_MAX_SEGMENTS = 300;
 const DEFAULT_QUERY_TIMEOUT_MS = 60 * 60 * 1000;
+const { editorialPrompt, resolveEditorialRules } = editorialRules;
 let restoredBookSourceLocks = 0;
 let standardizedGlossaryTableRows = 0;
 
@@ -367,6 +370,12 @@ function baselineSegmentsForGroup(group, baselineValues) {
 }
 
 function selectGroupsForBaselineMode(groups, glossary, previousGlossary, baselineValues, mode, bookInstructions) {
+  if (mode === "editorial_review") {
+    return {
+      selected: groups.map(group => ({ ...group, baselineSegments: baselineSegmentsForGroup(group, baselineValues) })),
+      reused: [], candidateEntryCount: 0, bookInstructionCandidateGroupCount: 0,
+    };
+  }
   let candidateEntries;
   if (mode === "definition_contract_upgrade") {
     candidateEntries = glossary.filter((entry) => entry.kind === "definition");
@@ -495,6 +504,7 @@ function buildPrompt(batch, config) {
     "Each ⟦L_...⟧ token marks an existing line break. Preserve every token exactly once in its original segment and order. Do not emit Unicode escapes or control characters instead; the caller restores the original separator from the token.",
     "Translate all ordinary English, including English inside quotation marks and capitalized role labels. Do not leave English words merely because they are capitalized.",
     `Use clear, direct, idiomatic language suitable for a ${config.targetLanguage}-language defense reader. Normalize capitalization to target-language conventions.`,
+    editorialPrompt(config.targetLanguage, "text", config.editorialRulesSha256),
     "Where contextual_glossary_definitions lists multiple meanings for the same English expression, resolve the sense from the source's service and surrounding context. These are alternatives, not interchangeable mandatory substitutions. Do not insert explanatory glossary annotations unless the English source includes that information.",
     ...(config.bookInstructions.applied ? [
       "The following book-specific rules are mandatory. They override conflicting general instructions, glossary wording, and edition guidance:",
@@ -505,8 +515,8 @@ function buildPrompt(batch, config) {
     ...(batch.groups.some((group) => group.baselineSegments) ? [
       "For each group with baseline_segments, use that accepted translation as the starting point. Make only the changes required by the mandatory book rules, current glossary locks, this edition's editorial guidance, or a clear translation error. Preserve good baseline wording and segmentation wherever possible.",
     ] : []),
-    "Do not merge, split, summarize, omit, or add information.",
-    "Preserve numbers, dates, email addresses, codes, punctuation when appropriate, internal line breaks, and every processing instruction such as <?ACE 4?> exactly.",
+    "Do not merge or split segments. Do not summarize, omit, or add information. The explicit measurement policy permits removing a redundant imperial equivalent only when the same metric quantity and every qualifier remain.",
+    "Preserve the values of numbers and dates while applying the selected language's notation and date format. Keep email addresses, codes, internal line breaks, and every processing instruction such as <?ACE 4?> exactly.",
     "Preserve leading and trailing whitespace after the segment anchor.",
     ...(config.recheckContext ? [
       "This is an independent recheck of only the groups that failed validation. Use recheck_context as the previous draft and correct the reported failures with minimal wording changes; retain its valid translation, facts, glossary tokens, and segment anchors.",
@@ -748,6 +758,12 @@ const configPath = path.join(jobDir, "job_config.json");
 const manifestPath = path.join(jobDir, "job_manifest.json");
 const config = readJson(configPath, "job configuration");
 if (!pathsEqual(String(config.jobPath || ""), jobDir)) throw new Error("Job configuration path does not match --job.");
+if (config.editorialRules) {
+  if (!isStrictlyInside(config.editorialRules.path, jobDir) || sha256File(config.editorialRules.path) !== config.editorialRules.sha256 ||
+      resolveEditorialRules(config.targetLanguage, "text").sha256 !== config.editorialRules.sha256) {
+    throw new Error("Editorial policy snapshot or current policy changed; review cannot resume.");
+  }
+}
 const stateName = String(config.subscriptionStateName || "codex_subscription");
 if (!/^(?!\.{1,2}$)[A-Za-z0-9][A-Za-z0-9._-]*$/.test(stateName)) {
   throw new Error("subscriptionStateName must be a safe relative directory name.");
@@ -834,6 +850,9 @@ if (config.baselineTranslation) {
   }
   if (!fs.existsSync(baselinePath)) throw new Error(`Missing baseline translation workbook: ${baselinePath}`);
   const baselineWorkbook = await SpreadsheetFile.importXlsx(await FileBlob.load(baselinePath));
+  if (config.baselineTranslation.workbookSha256 && sha256File(baselinePath) !== config.baselineTranslation.workbookSha256) {
+    throw new Error("Baseline translation workbook changed after editorial preparation.");
+  }
   const baselineValues = baselineWorkbook.worksheets.getItemAt(0).getUsedRange(true).values.map((row) => row.map(normalizeCell));
   assertBaselineWorkbook(sourceValues, baselineValues, baselinePath);
   baselineMode = String(config.baselineTranslation.mode || "");
@@ -874,6 +893,7 @@ const batches = makeBatches(preparedGroups, maxChars, maxGroups, maxSegments);
 
 const planCore = {
   schemaVersion: 2,
+  editorialRules: resolveEditorialRules(config.targetLanguage, "text"),
   inputDataSha256: sha256Json(sourceValues),
   inputFileSha256: sha256File(inputPath),
   glossarySha256: sha256Json(glossary),
@@ -989,6 +1009,7 @@ try {
         model: planIdentity.model,
         reasoningEffort: planIdentity.reasoningEffort,
         queryTimeoutMs,
+        editorialRulesSha256: planIdentity.editorialRules.sha256,
       },
       nodePath: codexNodePath,
       cliPath: codexCliPath,
@@ -1022,10 +1043,17 @@ try {
     }
   }
   applyGlossaryTableContract(sourceValues, outputValues, glossaryTableMap);
+  const panelManaged = loadPanelManagedContent(config, readJson(manifestPath, "job manifest"));
+  const panelReferencePreservation = preservePanelManagedContent(outputValues, panelManaged);
+  const nonEditorialIds = new Set([...protectedSource.contentIds,...panelManaged.keys()]);
   const languagePostprocessorCounts = applyLanguagePostprocessors(outputValues, config.targetLanguage, {
-    protectedContentIds: protectedSource.contentIds,
+    protectedContentIds: nonEditorialIds,
+    protectedStrings: [
+      ...preparedGroups.flatMap(group => group.bookSourceLocks.map(lock => lock.source)),
+      ...glossary.map(entry => entry.target),
+    ].filter(Boolean),
   });
-  assertBookInstructionOutput(sourceValues, outputValues, protectedSource.contentIds, bookInstructions);
+  assertBookInstructionOutput(sourceValues, outputValues, nonEditorialIds, bookInstructions);
   for (const group of groups) {
     outputValues[group.startRow][COL_B] = group.allRowIndexes.map((rowIndex) => outputValues[rowIndex][COL_D]).join("");
   }
@@ -1111,6 +1139,8 @@ try {
   const completedAt = new Date().toISOString();
   const report = {
     schemaVersion: 2,
+    editorialRules: planIdentity.editorialRules,
+    panelReferencePreservation,
     provider: "CodexSubscription",
     authentication: "ChatGPT",
     model: planIdentity.model,
@@ -1155,6 +1185,8 @@ try {
   finalManifest.updatedAt = completedAt;
   finalManifest.subscriptionTranslation = {
     ...(finalManifest.subscriptionTranslation || {}),
+    editorialRules: planIdentity.editorialRules,
+    panelReferencePreservation,
     completedAt,
     completedBatches: batches.length,
     totalBatches: batches.length,
@@ -1168,6 +1200,7 @@ try {
   });
   report.finalModelResolution = finalModelResolution;
   finalManifest.subscriptionTranslation.finalModelResolution = finalModelResolution;
+  editorialPrompt(config.targetLanguage, "text", planIdentity.editorialRules.sha256);
   const finalization = commitFileSetWithJournalSync(finalizationJournal, [
     { filePath: outputPath, data: outputBytes },
     { filePath: previewPath, data: previewBytes },

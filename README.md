@@ -82,6 +82,63 @@ node '.\04 Translate Comic Captions\Code\Translate_Comic_Captions.js'
 
 Read the stage README files before preparing data or launching an Adobe application.
 
+## Editorial rules across the pipeline
+
+`Code/TranslationEditorialRules.json` is the versioned runtime policy for English,
+French, German, Spanish, Portuguese, Dutch, Italian, Turkish, Polish and Swedish.
+It distinguishes the supplied house style from native-language adaptations and
+records its source references. The original private workbook is not distributed.
+Protected source sections and book-specific terminology take precedence.
+
+- Glossary authoring: `Build_Glossary_Runtime.cjs --rules French` prints only the
+  applicable glossary guidance. Building runtime JSON never restyles approved terms.
+- Text, diagrams and captions: prompts receive their own stage's rules and a policy
+  hash. Text/caption postprocessing normalizes applicable date and symbol spacing;
+  text QA checks mechanical typography outside protected source and glossary locks.
+- ICML import: the workbook must have passed QA under the current policy. The
+  recoverable import changes matching Content IDs, preserving literal XML structure.
+- InDesign finalization: checks layer order and body-indent styles and emits exact
+  encoded definitions for the **Cross-References panel > Define Cross-Reference
+  Formats > Definition** editor. All language-specific cross-reference changes
+  must use that panel encoder, never scripted building-block edits or flattened
+  reference text. Update only the indicated references using the panel, then save
+  and close the document. The finalizer verifies the result read-only.
+  Formats used exclusively by protected paragraphs
+  remain unchanged. Mixed protected/unprotected formats require explicit review.
+- Native GREP: after ICML import, run every shared and target-language formula
+  with InDesign's engine. The bounded Audit/Apply workflow is documented in the
+  [text-stage guide](02%20Translate%20Text/README.md#editorial-rules-and-finishing-order).
+  It excludes protected credits and generated cross-reference text, reports
+  zero-match runs, and rejects stale plans. Finalize and Complete require a
+  passing native GREP report for the exact final document.
+
+Apply revised rules to an already accepted translation with the appropriate job
+active:
+
+```powershell
+& '.\Run-Translation-Job.ps1' -Action ReviewRules -MaxBatches 1
+& '.\Run-Translation-Job.ps1' -Action Translate
+& '.\Run-Translation-Job.ps1' -Action Import
+& '.\Run-Translation-Job.ps1' -Action Finalize
+& '.\Run-Translation-Job.ps1' -Action Complete
+```
+
+`ReviewRules` transactionally snapshots the accepted workbook and policy and retains
+the previous ICML import evidence. It reviews every eligible group against that
+baseline; protected groups remain unchanged. It does not itself overwrite ICML or
+InDesign output. QA, import, layout and completion are bound to the current policy.
+
+Mechanical QA is not proof of idiom, meaning or section-wide acronym usage: those
+remain linguistic-review responsibilities. Caption placement/stacking and TOC
+numbering instructions apply when those objects are inserted, reordered or rebuilt;
+translation does not reorder existing artwork or rebuild a TOC automatically.
+Preserved style ranges retain bold emphasis and italic variables. The final layout
+report identifies the automated checks separately from this retained workflow guidance.
+
+Before a panel edit, retain one verified INDD recovery copy in the private job
+state. Do not discard unsaved Adobe work or delete recovery evidence during an
+interruption. Unknown layout styles/formats fail closed instead of being guessed.
+
 ## Codex model and authentication policy
 
 Translation is restricted to the ChatGPT-authenticated Codex harness. The pipeline:

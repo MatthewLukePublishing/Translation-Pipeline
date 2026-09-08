@@ -117,6 +117,56 @@ files cannot reuse a stale passing audit. Older jobs without a hashed layout
 report require a fresh finalization before completion; existing outputs are
 not silently rewritten.
 
+## Editorial rules and finishing order
+
+The shared ten-language policy routes prose rules to model prompts, mechanical
+typography to postprocessing and QA, and document rules to finalization.
+`ReviewRules` snapshots the accepted workbook and invalidates its old import
+evidence before reviewing it. Protected credits remain verbatim.
+
+All language-specific cross-reference changes must be entered through
+**Cross-References > Define Cross-Reference Formats > Definition**. The panel
+encoder owns the dynamic format codes and targeted reference updates. The
+translator preserves cached `CrossReferenceSource` segments, the importer
+rejects direct edits to them, and GREP excludes their ranges. The read-only
+editorial verifier checks both format definitions and generated text wrappers;
+saving a definition alone does not prove that the references were refreshed.
+Keep one verified INDD recovery copy before panel edits. Never update all
+references when only a small identified subset needs updating.
+
+After importing the reviewed workbook and updating the affected references in
+the panel, run every shared and target-language GREP expression with the native
+InDesign engine. The supplied matrix has four French punctuation expressions,
+unit spacing, math spacing and ten language-specific date expressions. The
+pipeline escapes the invalid bare plus sign, completes the explicit math
+spacing-after rule, and limits dates to horizontal whitespace and native month
+names. All 17 expressions remain documented in `Code/TranslationGrepRules.cjs`;
+each job records the applicable runs, including zero matches, and explicit
+language exclusions for the others.
+
+```powershell
+& '.\02 Translate Text\Code\InDesign\Invoke-InDesignGrepRules.ps1' -JobPath '<job>' -NodePath '<Node executable>' -Mode Audit
+# Review state/grep_plan.json. For linked ICML, correct the workbook and reimport.
+# Apply is available only for unlinked, document-owned text.
+& '.\02 Translate Text\Code\InDesign\Invoke-InDesignGrepRules.ps1' -JobPath '<job>' -NodePath '<Node executable>' -Mode Apply
+& '.\Run-Translation-Job.ps1' -Action Finalize -LayoutSettingsPath '<style profile>'
+```
+
+`Finalize` reruns native GREP verification after applying the styles. It fails
+if corrections remain. Linked ICML is audit-only: checking out and saving a
+story in InDesign strips the pipeline's Content IDs. Correct the translated
+workbook, validate it, and use the recoverable importer before auditing again;
+never check out a linked story to bypass this protection.
+Audits never mutate text; Apply uses one rule and unlinked story
+per call, verifies its previously audited matches, saves checkpoints and keeps
+a hash-verified recovery copy plus a transaction record. An interrupted GREP
+transaction stops further edits until the saved document and any unsaved work
+are reconciled with that copy. Do not delete its journal to bypass recovery.
+Find/change preferences and options are restored even on error. Structural tab
+or paragraph-break changes, unscoped notes, unexpected match counts, and stale
+document or policy evidence fail closed. Completion binds the native GREP,
+editorial and layout reports to the exact final INDD and imported workbook.
+
 ## Translating the current edition
 
 The mapped Origin package is a snapshot, not a live export. When the English

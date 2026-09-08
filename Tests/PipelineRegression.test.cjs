@@ -267,6 +267,14 @@ test("journaled re-import accepts the exact previous output but never overwrites
       writeWorkbook(output, [headers, ["p1", target, "id-1", target]]);
       const qa = run("Validation/Validate_Translation_Job.js");
       assert.equal(qa.status, 0, qa.stderr);
+      const manifestFile=path.join(job,"job_manifest.json");
+      const qaManifest=JSON.parse(fs.readFileSync(manifestFile,"utf8"));
+      assert.match(qaManifest.qa.editorialRules.sha256,/^[A-F0-9]{64}$/);
+      const tampered=structuredClone(qaManifest);
+      tampered.qa.editorialRules.sha256="0".repeat(64);
+      fs.writeFileSync(manifestFile,JSON.stringify(tampered));
+      assert.match(run("Import_Translation_Workbook.mjs").stderr,/current editorial rules/);
+      fs.writeFileSync(manifestFile,JSON.stringify(qaManifest));
       const imported = run("Import_Translation_Workbook.mjs");
       assert.equal(imported.status, 0, imported.stderr);
       assert.ok(fs.readFileSync(icml, "utf8").includes(`>${target}</Content>`));
@@ -274,10 +282,12 @@ test("journaled re-import accepts the exact previous output but never overwrites
     const userEdit = fs.readFileSync(icml, "utf8").replace("Corrigé", "User edit");
     fs.writeFileSync(icml, userEdit);
     writeWorkbook(output, [headers, ["p1", "Nouvelle cible", "id-1", "Nouvelle cible"]]);
-    assert.equal(run("Validation/Validate_Translation_Job.js").status, 0);
+    const changedSourceQa=run("Validation/Validate_Translation_Job.js");
+    assert.notEqual(changedSourceQa.status, 0, 'QA must not infer panel-managed caches from changed ICML');
+    assert.match(changedSourceQa.stderr,/ICML changed since the last accepted export\/import/);
     const blocked = run("Import_Translation_Workbook.mjs");
     assert.notEqual(blocked.status, 0);
-    assert.match(blocked.stderr, /differs from the previous import/);
+    assert.match(blocked.stderr, /ready_for_import|workbook|QA|previous import/i);
     assert.equal(fs.readFileSync(icml, "utf8"), userEdit);
   } finally {
     fs.rmSync(job, { recursive: true, force: true });

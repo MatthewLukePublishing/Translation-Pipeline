@@ -33,6 +33,7 @@ subscription_state/
 tmp/
 temp/
 coverage/
+outputs/
 
 # Private project governance and historical material
 /_Archive/

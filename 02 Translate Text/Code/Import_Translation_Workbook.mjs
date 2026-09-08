@@ -7,6 +7,8 @@ import fs from "node:fs";
 import path from "node:path";
 import XLSX from "../../Code/SheetJsNode.mjs";
 import transactionalFiles from "../../Code/TransactionalFileReplacement.cjs";
+import editorialRules from "../../Code/TranslationEditorialRules.cjs";
+import {panelManagedContent} from './PanelManagedReferences.mjs';
 import { fnv1a32Utf16 } from "./ContentFingerprint.mjs";
 import { normalizeContentId } from "./ContentIds.mjs";
 import { assertIcmlReplacementStructure, xmlEscapePreserveIcml } from "./IcmlContent.mjs";
@@ -146,6 +148,11 @@ if (!pathsEqual(config.jobPath, jobPath)) throw new Error("The job configuration
 if (manifest.status !== "ready_for_import" || manifest.qa?.status !== "passed") {
   throw new Error(`Job must be ready_for_import with passed QA; found ${manifest.status}.`);
 }
+const editorialPolicy = editorialRules.resolveEditorialRules(config.targetLanguage, "icml");
+if (manifest.qa.editorialRules?.sha256 !== editorialPolicy.sha256 ||
+    (config.editorialRules && config.editorialRules.sha256 !== editorialPolicy.sha256)) {
+  throw new Error("ICML import requires QA under the current editorial rules; rerun the rules review and validation.");
+}
 
 const workspaceRoot = path.resolve(config.productionWorkspace.root);
 const textRoot = path.resolve(config.productionWorkspace.textFolder);
@@ -217,6 +224,7 @@ for (const expected of expectedFiles) {
     throw new Error(`ICML SHA-256 differs from the ${priorImport ? "previous import" : "export"} manifest; import blocked: ${filePath}`);
   }
   const contentPattern = /<Content\b([^>]*\bid\s*=\s*"([^"]+)"[^>]*?)(\/>|>([\s\S]*?)<\/Content>)/g;
+  const panelManaged = panelManagedContent(originalText);
   const updatedText = originalText.replace(contentPattern, (full, attrs, rawId, closing, innerContent) => {
     const id = normalizeContentId(rawId);
     if (!idLocations.has(id)) idLocations.set(id, []);
@@ -226,6 +234,9 @@ for (const expected of expectedFiles) {
     totalMatched += 1;
     const translatedContent = payload.contentMap.get(id);
     const sourceContent = closing === "/>" ? "" : innerContent;
+    if (panelManaged.has(id) && translatedContent !== panelManaged.get(id)) {
+      throw new Error(`Content ID ${id} is generated cross-reference text. Use the Cross-References panel encoder; direct import changes are forbidden.`);
+    }
     assertIcmlReplacementStructure(sourceContent, translatedContent, `Content ID ${id} in ${filePath}`);
     const replacement = xmlEscapePreserveIcml(translatedContent);
     if (closing === "/>" && replacement === "") return `<Content${attrs}/>`;
@@ -287,6 +298,7 @@ const updatedManifest = structuredClone(manifest);
 updatedManifest.status = "imported";
 updatedManifest.updatedAt = completedAt;
 updatedManifest.import = {
+  editorialRules: { version: editorialPolicy.version, sha256: editorialPolicy.sha256 },
   completedAt,
   documentPath,
   workbookPath,

@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import ExcelJS from "exceljs";
 import atomicFiles from "../../Code/AtomicFiles.cjs";
 import transactionalFiles from "../../Code/TransactionalFileReplacement.cjs";
+import editorialRules from "../../Code/TranslationEditorialRules.cjs";
 import { resolveLatestSubscriptionModel } from "../../02 Translate Text/Code/Resolve-LatestSubscriptionModel.mjs";
 import {
   applyPortugueseTranslations,
@@ -29,6 +30,7 @@ const FINALIZATION_JOURNAL = path.join(STATE_DIR, "finalization_transaction.json
 const MODEL_POLICY = "official_latest_frontier";
 const REASONING_EFFORT = "xhigh";
 const TARGET_LANGUAGE = "Brazilian Portuguese";
+const EDITORIAL_POLICY = editorialRules.resolveEditorialRules(TARGET_LANGUAGE, "caption");
 const MAX_BATCH_ROWS = 40;
 const MAX_BATCH_CHARS = 12000;
 const QUERY_TIMEOUT_MS = 60 * 60 * 1000;
@@ -182,6 +184,7 @@ function buildPrompt(batch) {
     "Keep the result concise enough for the existing caption space. Do not omit, summarize, or add information.",
     "Preserve the exact line-break sequence and leading/trailing whitespace of each English caption.",
     "Write fully in Brazilian Portuguese except for true names, codes, URLs, email addresses, and filenames.",
+    editorialRules.editorialPrompt(TARGET_LANGUAGE, "caption", EDITORIAL_POLICY.sha256),
     "Do not use tools, browse, or read files.",
     JSON.stringify({
       batch_id: batch.id,
@@ -215,7 +218,11 @@ function validateResponse(response, batch) {
     if (JSON.stringify(boundaryWhitespace(source)) !== JSON.stringify(boundaryWhitespace(item.translated))) {
       throw new Error(`Boundary whitespace changed for ${item.id}.`);
     }
-    translated.set(item.id, item.translated);
+    const normalized = editorialRules.normalizeEditorialText(item.translated, TARGET_LANGUAGE, { languageRules: EDITORIAL_POLICY.language });
+    if (JSON.stringify(boundaryWhitespace(source)) !== JSON.stringify(boundaryWhitespace(normalized))) {
+      throw new Error(`Editorial normalization changed boundary whitespace for ${item.id}.`);
+    }
+    translated.set(item.id, normalized);
   }
   return translated;
 }
@@ -307,6 +314,7 @@ const plan = {
   modelPolicy: modelResolution.policy,
   reasoningEffort: REASONING_EFFORT,
   targetLanguage: TARGET_LANGUAGE,
+  editorialRules: EDITORIAL_POLICY,
   inputWorkbookSha256: sha256File(WORKBOOK_PATH),
   pendingRows: loaded.pending.map((row) => ({ id: row.id, rowNumber: row.rowNumber, english: row.english })),
   batches: batches.map((batch) => ({ id: batch.id, ids: batch.rows.map((row) => row.id) })),

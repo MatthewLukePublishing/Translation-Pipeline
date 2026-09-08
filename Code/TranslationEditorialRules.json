@@ -1,0 +1,501 @@
+{
+  "schemaVersion": 1,
+  "version": "1.0.0",
+  "sourceWorkbook": "Translation Rules.xlsx",
+  "scope": "English source plus nine target languages. House style is applied only where linguistically and technically applicable.",
+  "precedence": [
+    "Protected source sections, verified quotations, official names, codes and manufacturer specifications remain protected.",
+    "Book-specific mandatory terminology overrides generic terminology advice.",
+    "Language-specific conventions override English-specific wording and typography.",
+    "The explicit English/Spanish metric-first rule governs the conflicting generic imperial-first example."
+  ],
+  "sources": [
+    {
+      "id": "house",
+      "title": "User-supplied Translation Rules.xlsx",
+      "reference": "Sheet1, A1:H59"
+    },
+    {
+      "id": "bipm",
+      "title": "BIPM SI Brochure: quantity and unit typography",
+      "url": "https://www.bipm.org/fr/publications/si-brochure/"
+    },
+    {
+      "id": "fr",
+      "title": "Académie française: questions de langue",
+      "url": "https://www.academie-francaise.fr/questions-de-langue"
+    },
+    {
+      "id": "de",
+      "title": "Duden: quotation marks and punctuation",
+      "url": "https://www.duden.de/sprachwissen/rechtschreibregeln/anfuehrungszeichen"
+    },
+    {
+      "id": "es",
+      "title": "FundéuRAE: percentage notation",
+      "url": "https://www.fundeu.es/recomendacion/porcentajes-claves-de-redaccion/"
+    },
+    {
+      "id": "nl",
+      "title": "Taalunie: date notation",
+      "url": "https://taaladvies.net/datumnotatie/"
+    },
+    {
+      "id": "tr",
+      "title": "Türk Dil Kurumu: writing numbers",
+      "url": "https://tdk.gov.tr/icerik/yazim-kurallari/sayilarin-yazilisi/"
+    },
+    {
+      "id": "sv",
+      "title": "Språkrådet: percentage signs",
+      "url": "https://frageladan.isof.se/faqs/21726"
+    }
+  ],
+  "shared": [
+    {
+      "id": "fractions_and_precision",
+      "category": "Numbers",
+      "stages": ["text", "diagram", "caption"],
+      "instruction": "Use decimal quantities with measurement units. Fractions may remain for nonmeasurement concepts such as portions of a circle. Preserve exact ranges, ratios and specifications; do not confuse a fraction slash with an ordinary slash in dates or codes.",
+      "verification": "linguistic",
+      "scope": "Unprotected editorial content",
+      "source": "house"
+    },
+    {
+      "id": "plain_register",
+      "category": "Sentence structure",
+      "stages": [
+        "glossary",
+        "text",
+        "diagram",
+        "caption"
+      ],
+      "instruction": "Use clear, direct, idiomatic language for an educated nonacademic reader. Natural sentence-initial conjunctions are acceptable. End complete sentences and verbal caption fragments with appropriate punctuation.",
+      "verification": "linguistic",
+      "scope": "Unprotected editorial content",
+      "source": "house"
+    },
+    {
+      "id": "numbers_in_prose",
+      "category": "Numbers",
+      "stages": [
+        "text",
+        "caption"
+      ],
+      "instruction": "Spell out ordinary counting numbers one through one hundred as house style. Use numerals for time, measurements, decimals, percentages, numbers above one hundred, labels, tables, identifiers and official designations. Do not spell out digits inside a designation.",
+      "verification": "linguistic",
+      "scope": "Unprotected editorial content",
+      "source": "house"
+    },
+    {
+      "id": "conversion_precision",
+      "category": "Numbers",
+      "stages": [
+        "text",
+        "diagram",
+        "caption"
+      ],
+      "instruction": "New unit conversions use at most three significant digits, or two for approximate non-specific measures. Preserve exact source specifications and precision; do not round an exact value merely to meet a style preference.",
+      "verification": "linguistic",
+      "scope": "Unprotected editorial content",
+      "source": "house"
+    },
+    {
+      "id": "unit_system",
+      "category": "Measurements",
+      "stages": [
+        "text",
+        "diagram",
+        "caption"
+      ],
+      "instruction": "For English and Spanish, present metric first followed by the imperial equivalent. Other languages use metric only. Preserve regulations, manufacturer specifications and idiosyncratic designations or calibres; do not convert brand names or cartridge names. A redundant imperial equivalent may be removed only when the metric quantity expresses the same information.",
+      "verification": "linguistic",
+      "scope": "Unprotected editorial content",
+      "source": "house"
+    },
+    {
+      "id": "unit_symbols",
+      "category": "Measurements",
+      "stages": [
+        "text",
+        "diagram",
+        "caption",
+        "icml"
+      ],
+      "instruction": "Use singular, case-sensitive unit symbols after numerals and U+00A0 NBSP before them. Prefer symbols to spelled-out units except in names or idiomatic contexts. Plane-angle °, ′ and ″ attach to the number; °C takes NBSP. Do not change calibre or product designations.",
+      "verification": "text",
+      "scope": "Unprotected editorial content",
+      "source": "house"
+    },
+    {
+      "id": "date_spacing",
+      "category": "Dates",
+      "stages": [
+        "text",
+        "caption",
+        "icml"
+      ],
+      "instruction": "Use the selected language's date form, with NBSP between its words and numeric components. Keep the four-digit year and the actual date. Do not normalize identifiers or reference codes as dates.",
+      "verification": "text",
+      "scope": "Unprotected editorial content",
+      "source": "house"
+    },
+    {
+      "id": "math_spacing",
+      "category": "Math symbols",
+      "stages": [
+        "text",
+        "diagram",
+        "caption",
+        "icml"
+      ],
+      "instruction": "Put NBSP on both sides of binary mathematical operators + − × ÷ = ≠ ≈ < > ≤ ≥ ±. Distinguish a unary sign from a binary operator. A fraction slash ⁄ and vulgar-fraction glyphs are parts of numbers, not binary operators. Do not alter URLs, tags, ranges, names or identifiers.",
+      "verification": "text",
+      "scope": "Unprotected editorial content",
+      "source": "house"
+    },
+    {
+      "id": "acronym_introduction",
+      "category": "Acronyms",
+      "stages": [
+        "text",
+        "caption"
+      ],
+      "instruction": "Introduce a verified full term followed by its acronym in parentheses at first use in each section. Follow the chosen glossary and book-specific official-name rules. Do not invent an expansion or repeat an expansion unnecessarily in the same caption.",
+      "verification": "linguistic",
+      "scope": "Unprotected editorial content",
+      "source": "house"
+    },
+    {
+      "id": "parenthetical_examples",
+      "category": "Sentence structure",
+      "stages": [
+        "text",
+        "caption"
+      ],
+      "instruction": "Use the language's natural equivalent of e.g. and i.e. in parentheses, and the equivalent of for example and that is outside parentheses. Do not transplant English abbreviations where they are unnatural.",
+      "verification": "linguistic",
+      "scope": "Unprotected editorial content",
+      "source": "house"
+    },
+    {
+      "id": "modality",
+      "category": "Specific words",
+      "stages": [
+        "text",
+        "caption"
+      ],
+      "instruction": "Avoid vague prescriptive should, unnecessary will, and stilted thus in English editorial prose. In translations, preserve the source's obligation, recommendation, condition, uncertainty and tense with natural wording; do not mechanically ban equivalent target-language words or strengthen advice into an obligation.",
+      "verification": "linguistic",
+      "scope": "Unprotected editorial content",
+      "source": "house"
+    },
+    {
+      "id": "pronouns",
+      "category": "Specific words",
+      "stages": [
+        "text",
+        "caption"
+      ],
+      "instruction": "Avoid unnecessary personal pronouns and ambiguous referents. Use natural gender-neutral wording for an unknown person where the language allows it. Do not erase a known person's gender or import singular English they into another language.",
+      "verification": "linguistic",
+      "scope": "Unprotected editorial content",
+      "source": "house"
+    },
+    {
+      "id": "caption_order",
+      "category": "Paragraphs",
+      "stages": [
+        "text",
+        "caption"
+      ],
+      "instruction": "Finish location/date captions in the form Location, date. Use natural target-language order for the rest of the caption without dropping names, events or facts.",
+      "verification": "linguistic",
+      "scope": "Unprotected editorial content",
+      "source": "house"
+    },
+    {
+      "id": "draft_comments",
+      "category": "Drafting",
+      "stages": [
+        "text",
+        "caption",
+        "icml",
+        "layout"
+      ],
+      "instruction": "Editorial drafting comments use curly brackets. Detect unresolved editorial comments before final publication and require a recorded resolution. Preserve literal braces used in code or mathematics.",
+      "verification": "review",
+      "scope": "Unprotected editorial content",
+      "source": "house"
+    },
+    {
+      "id": "cross_references",
+      "category": "Cross references",
+      "stages": [
+        "icml",
+        "layout"
+      ],
+      "instruction": "Apply the selected language's Image, In The Text and Credit templates to live InDesign cross-reference formats. Keep fullPara, paraText, pageNum and ^S tokens dynamic. Do not replace them with literal text or regenerate image labels by guessing.",
+      "verification": "layout",
+      "scope": "Unprotected editorial content",
+      "source": "house"
+    },
+    {
+      "id": "paragraph_indents",
+      "category": "Paragraphs",
+      "stages": [
+        "layout"
+      ],
+      "instruction": "The first body paragraph after a heading or section break has no first-line indent; subsequent body paragraphs use the approved body indent. Use paragraph styles, not inserted spaces. Do not apply body indentation to captions, tables or lists.",
+      "verification": "layout",
+      "scope": "Unprotected editorial content",
+      "source": "house"
+    },
+    {
+      "id": "layer_order",
+      "category": "Layers",
+      "stages": [
+        "layout"
+      ],
+      "instruction": "Verify the existing layers top-to-bottom as KDP, Images, Body, Peripheral, Background where those production layers apply. Report absent, extra or differently named layers for scoped resolution; never create, delete or rename layers blindly.",
+      "verification": "layout",
+      "scope": "Unprotected editorial content",
+      "source": "house"
+    },
+    {
+      "id": "image_number_order",
+      "category": "Image numbering",
+      "stages": [
+        "layout"
+      ],
+      "instruction": "When images are pasted or changed on one page, check image stacking bottom-to-top against intended caption numbering. Preserve existing image order unless a verified discrepancy requires a change.",
+      "verification": "layout",
+      "scope": "Unprotected editorial content",
+      "source": "house"
+    },
+    {
+      "id": "toc_numbering",
+      "category": "Table of contents",
+      "stages": [
+        "layout"
+      ],
+      "instruction": "Verify TOC 2 and the section-specific Title 2 numbering sequence. Correct a known sequence with the numbering style start/continue settings, not typed numbering. Preserve existing section boundaries and dynamic numbering.",
+      "verification": "layout",
+      "scope": "Unprotected editorial content",
+      "source": "house"
+    },
+    {
+      "id": "emphasis",
+      "category": "Specific words",
+      "stages": [
+        "layout"
+      ],
+      "instruction": "Preserve bold for emphasis and italics for variables using character styles. Do not italicize unit symbols merely because variables are italic.",
+      "verification": "layout",
+      "scope": "Unprotected editorial content",
+      "source": "house"
+    }
+  ],
+  "languages": [
+    {
+      "language": "English",
+      "code": "en",
+      "dateExample": "14 Mar 2013",
+      "decimal": ".",
+      "grouping": ",",
+      "percentExample": "5%",
+      "quotes": "“text”",
+      "capitalization": "Use English title case for headings. Lowercase after a colon unless a proper name or quoted sentence requires capitals.",
+      "acronyms": "The house-style acronym plural is MWD’s. Do not export this apostrophe rule to other languages.",
+      "hyphens": "Use English compound-modifier hyphens. With SI symbols keep a space (5 m); use 5-foot when the unit is written out.",
+      "units": "metric_then_imperial",
+      "dateRule": "Use day + the local month abbreviation + four-digit year, joined with NBSP, as in the supplied house-style date/GREP matrix. Preserve punctuation belonging to the chosen abbreviation.",
+      "punctuation": "Do not add French-style spaces before ; : ! ?. Apply native quotation punctuation and the selected percentage form. Preserve Spanish opening ¿ and ¡. Respect Turkish percent-sign placement.",
+      "crossReferences": {
+        "image": "(See <fullPara delim=\":\" />, Pg.^S<pageNum />.)",
+        "text": "(See <paraText />, Pg.^S<pageNum />.)",
+        "credit": "<fullPara delim=\":\" />:"
+      }
+    },
+    {
+      "language": "French",
+      "code": "fr",
+      "dateExample": "25 octobre 2004",
+      "decimal": ",",
+      "grouping": " ",
+      "percentExample": "5 %",
+      "quotes": "« texte »",
+      "capitalization": "Use sentence case in headings, with capitals for proper names. Lowercase after a colon except names and complete quotations.",
+      "acronyms": "Keep unlexicalized capital-letter acronyms invariable. No English plural ’s.",
+      "hyphens": "Use French compounds, agreement and elision. Do not transfer English prenominal hyphens.",
+      "units": "metric_only",
+      "dateRule": "Day + full lowercase French month + year; 1er for the first day. Example: 25 octobre 2004.",
+      "punctuation": "Use U+202F NNBSP before ; : ! ? and %, after « and before ». Use a regular space before an em dash and NNBSP after it. No spaces inside an apostrophe contraction.",
+      "crossReferences": {
+        "image": "(consulter l'<fullPara delim=\":\" />, p.^S<pageNum />)",
+        "text": "(consulter « <paraText /> », p.^S<pageNum />)",
+        "credit": "<fullPara delim=\":\" /> :"
+      }
+    },
+    {
+      "language": "German",
+      "code": "de",
+      "dateExample": "14 Mär 2013",
+      "decimal": ",",
+      "grouping": ".",
+      "percentExample": "5 %",
+      "quotes": "„Text“",
+      "capitalization": "Capitalize nouns and proper names, including in headings. After a colon capitalize a complete sentence; otherwise use ordinary German casing.",
+      "acronyms": "Use established German abbreviation plurals where needed, without an English plural apostrophe.",
+      "hyphens": "Use German compounds and necessary hyphens. Do not copy English open-compound syntax.",
+      "units": "metric_only",
+      "dateRule": "Use day + the local month abbreviation + four-digit year, joined with NBSP, as in the supplied house-style date/GREP matrix. Preserve punctuation belonging to the chosen abbreviation.",
+      "punctuation": "Do not add French-style spaces before ; : ! ?. Apply native quotation punctuation and the selected percentage form. Preserve Spanish opening ¿ and ¡. Respect Turkish percent-sign placement.",
+      "crossReferences": {
+        "image": "(Siehe <fullPara delim=\":\" />, S.^S<pageNum />.)",
+        "text": "(Siehe <paraText />, S.^S<pageNum />.)",
+        "credit": "<fullPara delim=\":\" />:"
+      }
+    },
+    {
+      "language": "Spanish",
+      "code": "es",
+      "dateExample": "25 de octubre de 2004",
+      "decimal": ",",
+      "grouping": " ",
+      "percentExample": "5 %",
+      "quotes": "«texto»",
+      "capitalization": "Use sentence case for headings, preserving official names. Lowercase after a colon except proper names and quoted sentences.",
+      "acronyms": "Keep capital-letter acronyms invariable in writing; express plurality through determiners.",
+      "hyphens": "Use Spanish syntax for compound modifiers; do not import English hyphens.",
+      "units": "metric_then_imperial",
+      "dateRule": "Day + de + full lowercase month + de + year, joined with NBSP.",
+      "punctuation": "Do not add French-style spaces before ; : ! ?. Apply native quotation punctuation and the selected percentage form. Preserve Spanish opening ¿ and ¡. Respect Turkish percent-sign placement.",
+      "crossReferences": {
+        "image": "(Ver <fullPara delim=\":\" />, pág.^S<pageNum />)",
+        "text": "(Ver <paraText />, pág.^S<pageNum />)",
+        "credit": "<fullPara delim=\":\" />:"
+      }
+    },
+    {
+      "language": "Portuguese",
+      "code": "pt",
+      "dateExample": "25 de outubro de 2004",
+      "decimal": ",",
+      "grouping": ".",
+      "percentExample": "5 %",
+      "quotes": "«texto»",
+      "capitalization": "Use sentence case for headings, except proper names. Use ordinary Portuguese rules after a colon.",
+      "acronyms": "Use established Portuguese acronym plural forms only where appropriate; no English plural apostrophe.",
+      "hyphens": "Use Portuguese compound and prefix spelling, including its context-dependent hyphen rules.",
+      "units": "metric_only",
+      "dateRule": "Day + de + full lowercase month + de + year, joined with NBSP.",
+      "punctuation": "Do not add French-style spaces before ; : ! ?. Apply native quotation punctuation and the selected percentage form. Preserve Spanish opening ¿ and ¡. Respect Turkish percent-sign placement.",
+      "crossReferences": {
+        "image": "(Consulte a <fullPara delim=\":\" />, P.^S<pageNum />.)",
+        "text": "(Consulte <paraText />, P.^S<pageNum />.)",
+        "credit": "<fullPara delim=\":\" />:"
+      }
+    },
+    {
+      "language": "Dutch",
+      "code": "nl",
+      "dateExample": "25 okt 2004",
+      "decimal": ",",
+      "grouping": ".",
+      "percentExample": "5%",
+      "quotes": "‘tekst’",
+      "capitalization": "Use sentence case for headings, preserving proper names. Lowercase after a colon except a quotation or proper name.",
+      "acronyms": "Use native Dutch acronym inflection. An apostrophe may be required for letter abbreviations; do not apply English forms indiscriminately.",
+      "hyphens": "Use native Dutch compounds, linking forms and necessary hyphens.",
+      "units": "metric_only",
+      "dateRule": "Use day + the local month abbreviation + four-digit year, joined with NBSP, as in the supplied house-style date/GREP matrix. Preserve punctuation belonging to the chosen abbreviation.",
+      "punctuation": "Do not add French-style spaces before ; : ! ?. Apply native quotation punctuation and the selected percentage form. Preserve Spanish opening ¿ and ¡. Respect Turkish percent-sign placement.",
+      "crossReferences": {
+        "image": "(Zie <fullPara delim=\":\" />, p.^S<pageNum />.)",
+        "text": "(Zie <paraText />, p.^S<pageNum />.)",
+        "credit": "<fullPara delim=\":\" />:"
+      }
+    },
+    {
+      "language": "Italian",
+      "code": "it",
+      "dateExample": "25 ott 2004",
+      "decimal": ",",
+      "grouping": ".",
+      "percentExample": "5 %",
+      "quotes": "«testo»",
+      "capitalization": "Use sentence case for headings, preserving proper names. Lowercase after a colon except names and quotations.",
+      "acronyms": "Normally keep capital-letter acronyms invariable. No English plural ’s.",
+      "hyphens": "Use Italian compound and prefix spelling; do not copy English hyphenated noun strings.",
+      "units": "metric_only",
+      "dateRule": "Use day + the local month abbreviation + four-digit year, joined with NBSP, as in the supplied house-style date/GREP matrix. Preserve punctuation belonging to the chosen abbreviation.",
+      "punctuation": "Do not add French-style spaces before ; : ! ?. Apply native quotation punctuation and the selected percentage form. Preserve Spanish opening ¿ and ¡. Respect Turkish percent-sign placement.",
+      "crossReferences": {
+        "image": "(Vedere <fullPara delim=\":\" />, pag.^S<pageNum />.)",
+        "text": "(Vedere <paraText />, pag.^S<pageNum />.)",
+        "credit": "<fullPara delim=\":\" />:"
+      }
+    },
+    {
+      "language": "Turkish",
+      "code": "tr",
+      "dateExample": "25 Eki 2004",
+      "decimal": ",",
+      "grouping": ".",
+      "percentExample": "%5",
+      "quotes": "“metin”",
+      "capitalization": "Use Turkish title capitalization and dotted/dotless I correctly. Use ordinary Turkish sentence casing after colons.",
+      "acronyms": "Attach suffixes according to Turkish pronunciation and apostrophe rules for abbreviations; never append English plural ’s.",
+      "hyphens": "Use Turkish compound spelling and vowel harmony; do not import English modifier hyphens.",
+      "units": "metric_only",
+      "dateRule": "Use day + the local month abbreviation + four-digit year, joined with NBSP, as in the supplied house-style date/GREP matrix. Preserve punctuation belonging to the chosen abbreviation.",
+      "punctuation": "Do not add French-style spaces before ; : ! ?. Apply native quotation punctuation and the selected percentage form. Preserve Spanish opening ¿ and ¡. Respect Turkish percent-sign placement.",
+      "crossReferences": {
+        "image": "(Bkz. <fullPara delim=\":\" />, s.^S<pageNum />.)",
+        "text": "(Bkz. <paraText />, s.^S<pageNum />.)",
+        "credit": "<fullPara delim=\":\" />:"
+      }
+    },
+    {
+      "language": "Polish",
+      "code": "pl",
+      "dateExample": "25 paź 2004",
+      "decimal": ",",
+      "grouping": " ",
+      "percentExample": "5%",
+      "quotes": "„tekst”",
+      "capitalization": "Use sentence case for headings except proper names and prescribed official titles. Lowercase after a colon except names and quotations.",
+      "acronyms": "Use established Polish acronym inflection and hyphens when required; no blanket English plural ’s.",
+      "hyphens": "Use Polish compound and prefix spelling and inflection.",
+      "units": "metric_only",
+      "dateRule": "Use day + the local month abbreviation + four-digit year, joined with NBSP, as in the supplied house-style date/GREP matrix. Preserve punctuation belonging to the chosen abbreviation.",
+      "punctuation": "Do not add French-style spaces before ; : ! ?. Apply native quotation punctuation and the selected percentage form. Preserve Spanish opening ¿ and ¡. Respect Turkish percent-sign placement.",
+      "crossReferences": {
+        "image": "(Zobacz <fullPara delim=\":\" />, s.^S<pageNum />.)",
+        "text": "(Zobacz <paraText />, s.^S<pageNum />.)",
+        "credit": "<fullPara delim=\":\" />:"
+      }
+    },
+    {
+      "language": "Swedish",
+      "code": "sv",
+      "dateExample": "25 okt 2004",
+      "decimal": ",",
+      "grouping": " ",
+      "percentExample": "5 %",
+      "quotes": "”text”",
+      "capitalization": "Use sentence case for headings, preserving proper names. A full independent sentence after a colon can begin with a capital.",
+      "acronyms": "Use Swedish colon before letter-acronym endings where required, such as EU:s. Do not use English apostrophe plurals.",
+      "hyphens": "Use Swedish compounds and required hyphens, not English noun-string spacing.",
+      "units": "metric_only",
+      "dateRule": "Use day + the local month abbreviation + four-digit year, joined with NBSP, as in the supplied house-style date/GREP matrix. Preserve punctuation belonging to the chosen abbreviation.",
+      "punctuation": "Do not add French-style spaces before ; : ! ?. Apply native quotation punctuation and the selected percentage form. Preserve Spanish opening ¿ and ¡. Respect Turkish percent-sign placement.",
+      "crossReferences": {
+        "image": "(Se <fullPara delim=\":\" />, s.^S<pageNum />.)",
+        "text": "(Se <paraText />, s.^S<pageNum />.)",
+        "credit": "<fullPara delim=\":\" />:"
+      }
+    }
+  ]
+}

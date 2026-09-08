@@ -258,9 +258,9 @@ test("language postprocessors skip protected credits while standardizing French 
   const counts = postprocessors.applyLanguagePostprocessors(values, "French", {
     protectedContentIds: new Set(["credit-1"]),
   });
-  assert.equal(values[1][3], "6 juin 1944");
+  assert.equal(values[1][3], "6\u00A0juin\u00A01944");
   assert.equal(values[2][3], "Image 1: 6 Jun 1944");
-  assert.equal(counts.frenchDatesStandardized, 1);
+  assert.equal(counts.editorialSegmentsStandardized, 1);
 });
 
 test("file-set transactions commit together and recover interrupted application", () => {

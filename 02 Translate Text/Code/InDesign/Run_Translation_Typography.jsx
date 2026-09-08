@@ -50,6 +50,60 @@
     }
     if (count < 1 || count > 100 || start < 0 || Math.floor(start) !== start) throw new Error("Invalid bounded typography range.");
     var rows = [], styles, i, s, finish;
+    if (action === "editorial-summary") {
+      return "EDITORIAL_SUMMARY|layers=" + boundedLength(doc.layers.length, 100, "Layers") +
+        "|formats=" + boundedLength(doc.crossReferenceFormats.length, 200, "Cross-reference formats") +
+        "|references=" + boundedLength(doc.crossReferenceSources.length, 10000, "Cross-reference sources") +
+        "|paragraphStyles=" + boundedLength(doc.allParagraphStyles.length, 1000, "Styles");
+    }
+    if (action === "editorial-layers") {
+      boundedLength(doc.layers.length, 100, "Layers");
+      finish = Math.min(doc.layers.length, start + count);
+      for (i = start; i < finish; i++) {
+        var layer = doc.layers[i];
+        rows.push("LAYER|index=" + i + "|id=" + enc(layer.id) + "|name=" + enc(layer.name) + "|visible=" + enc(layer.visible) + "|locked=" + enc(layer.locked));
+      }
+      return rows.length ? rows.join("\n") : "UNCHANGED";
+    }
+    if (action === "editorial-formats") {
+      if (count > 10) throw new Error("At most ten cross-reference formats per call.");
+      boundedLength(doc.crossReferenceFormats.length, 200, "Cross-reference formats");
+      finish = Math.min(doc.crossReferenceFormats.length, start + count);
+      for (i = start; i < finish; i++) {
+        var format = doc.crossReferenceFormats[i], blocks = format.buildingBlocks;
+        boundedLength(blocks.length, 20, "Format building blocks");
+        rows.push("FORMAT|id=" + enc(format.id) + "|name=" + enc(format.name) + "|blocks=" + blocks.length);
+        for (var blockIndex = 0; blockIndex < blocks.length; blockIndex++) {
+          var block = blocks[blockIndex];
+          var blockType = block.blockType, customText = "", delimiter = "", includeDelimiter = "";
+          if (blockType === BuildingBlockTypes.CUSTOM_STRING_BUILDING_BLOCK) customText = block.customText;
+          if (blockType === BuildingBlockTypes.FULL_PARAGRAPH_BUILDING_BLOCK) {
+            delimiter = block.appliedDelimiter; includeDelimiter = block.includeDelimiter;
+          }
+          rows.push("BLOCK|formatId=" + enc(format.id) + "|index=" + blockIndex + "|type=" + enc(blockType) +
+            "|customText=" + enc(customText) + "|delimiter=" + enc(delimiter) + "|includeDelimiter=" + enc(includeDelimiter));
+        }
+      }
+      return rows.length ? rows.join("\n") : "UNCHANGED";
+    }
+    if (action === "editorial-references") {
+      if (count > 25) throw new Error("At most twenty-five cross-reference sources per call.");
+      var referenceSources = doc.crossReferenceSources;
+      boundedLength(referenceSources.length, 10000, "Cross-reference sources");
+      finish = Math.min(referenceSources.length, start + count);
+      for (i = start; i < finish; i++) {
+        var reference = referenceSources[i];
+        var sourceText = reference.sourceText;
+        if (sourceText.paragraphs.length !== 1) throw new Error("Cross-reference spans multiple paragraphs; scoped review required.");
+        rows.push("REFERENCE|index=" + i + "|id=" + enc(reference.id) + "|formatId=" + enc(reference.appliedFormat.id) +
+          "|storyId=" + enc(sourceText.parentStory.id) + "|text=" + enc(sourceText.contents) +
+          "|paragraphStyle=" + enc(stylePath(sourceText.paragraphs[0].appliedParagraphStyle)));
+      }
+      return rows.length ? rows.join("\n") : "UNCHANGED";
+    }
+    if (action === "editorial-apply-format" || action === "editorial-update-reference") {
+      throw new Error("Cross-reference language changes must use the Cross-References panel format encoder; direct script edits are forbidden.");
+    }
     if (action === "summary") {
       return "SUMMARY|name=" + enc(doc.name) + "|path=" + enc(doc.fullName.fsName) + "|modified=" + enc(doc.modified) +
         "|pages=" + enc(boundedLength(doc.pages.length, 2000, "Pages")) +
@@ -83,7 +137,9 @@
           try { if (s.basedOn && s.basedOn.isValid) basedOn = stylePath(s.basedOn); } catch (_) {}
           rows.push("STYLE|id=" + enc(s.id) + "|name=" + enc(s.name) + "|path=" + enc(currentPath) +
             "|basedOn=" + enc(basedOn) + "|pointSize=" + enc(s.pointSize) + "|leading=" + enc(s.leading) +
-            "|language=" + enc(currentLanguage) + "|fontStyle=" + enc(s.fontStyle));
+            "|language=" + enc(currentLanguage) + "|fontStyle=" + enc(s.fontStyle) +
+            "|firstLineIndent=" + enc(s.firstLineIndent) + "|numberingContinue=" + enc(s.numberingContinue) +
+            "|numberingStartAt=" + enc(s.numberingStartAt) + "|numberingExpression=" + enc(s.numberingExpression));
         }
       }
       return rows.length ? rows.join("\n") : "UNCHANGED";

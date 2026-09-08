@@ -24,3 +24,7 @@ node '.\01 Translate Glossaries\Code\Shared\Validate_Glossary_Workflow.cjs'
 
 Use `--family '<exact family name>'` with the builder to process one family. The workflow validator also checks mapped profiles, origin resources, and optional book-instruction modules.
 
+Before authoring new glossary entries or explicitly requested revisions, print the
+language-specific editorial guidance with `Build_Glossary_Runtime.cjs --rules French`
+(replace French with the target language). This uses the shared versioned rules.
+It does not modify approved entries or require private glossary input files.

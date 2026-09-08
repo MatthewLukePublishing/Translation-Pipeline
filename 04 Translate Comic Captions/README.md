@@ -2,6 +2,12 @@
 
 Stage 4 fills only pending cells in the Portuguese caption column of a local workbook. It preserves every other cell value and style, supports bounded resumable batches, and commits the workbook, final state, and report through one recoverable transaction.
 
+Caption prompts receive the applicable shared editorial and Portuguese-language
+rules. The state pins their policy hash, while response postprocessing applies
+only relevant punctuation, date and symbol spacing. Original segment-boundary
+whitespace and every non-target cell remain protected. InDesign cross-reference
+and native GREP actions belong to document finalization, not this workbook stage.
+
 Place the real workbook under `Working Files` and run from the repository root:
 
 ```powershell

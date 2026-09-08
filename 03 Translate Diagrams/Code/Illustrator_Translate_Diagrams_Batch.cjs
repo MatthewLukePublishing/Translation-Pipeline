@@ -23,6 +23,7 @@
  */
 
 const fs = require("fs");
+const editorialRules = require("../../Code/TranslationEditorialRules.cjs");
 const path = require("path");
 const os = require("os");
 const crypto = require("crypto");
@@ -46,6 +47,7 @@ const {
 
 let MODEL = "";
 let TARGET_LANGUAGE = trimString(process.env.AI_TARGET_LANGUAGE || "");
+let EDITORIAL_POLICY = null;
 let BOOK = trimString(process.env.AI_BOOK || "");
 let GLOSSARY_PROFILE = trimString(process.env.AI_GLOSSARY_PROFILE || "");
 let GLOSSARY_RESOURCES = null;
@@ -547,6 +549,7 @@ function buildDelimitedPrompt(scanPayload) {
     "Do not translate pre-replaced glossary terms back into English or paraphrase them.",
     "Any placeholder like __lock_acronym_1__ is a locked acronym token that must be preserved exactly.",
     "Preserve ids exactly and return only valid JSON matching the schema.",
+    editorialRules.editorialPrompt(targetLanguage, "diagram", EDITORIAL_POLICY?.sha256),
     "",
     "<<<BEGIN_SHARED_SCHEMA>>>",
     JSON.stringify({
@@ -715,6 +718,7 @@ async function translateDiagramOnce(scanPayload, statePaths) {
     queryResolutions.push({ attempt, ...queryModelResolution });
     writeJson(statePaths.codexRequestJson, {
       model: MODEL, reasoningEffort: REASONING_EFFORT, queries: queryResolutions,
+      editorialRules: editorialRules.resolveEditorialRules(scanPayload.targetLanguage || TARGET_LANGUAGE, "diagram"),
     });
     try {
       removeFileIfExists(statePaths.codexResponseJson);
@@ -1522,6 +1526,7 @@ async function main() {
   if (!BOOK && CHECK_ONLY) {
     throw new Error("Set AI_BOOK for a non-interactive Stage 3 readiness check.");
   }
+  EDITORIAL_POLICY = editorialRules.resolveEditorialRules(TARGET_LANGUAGE, "diagram");
   if (!BOOK) BOOK = await ask("Book code: ");
   if (!BOOK || /[\r\n\0]/.test(BOOK)) {
     console.error("A valid book code is required.");

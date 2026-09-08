@@ -34,6 +34,11 @@ foreach ($script in $powerShellScripts) {
 
 $contractTests = @(
     'SharedContracts.test.cjs'
+    'TranslationEditorialRules.test.cjs'
+    'EditorialLayoutRules.test.cjs'
+    'TranslationGrepRules.test.cjs'
+    'PanelManagedReferences.test.mjs'
+    'NativeGrepSafety.test.cjs'
     'LiveModelPolicy.test.cjs'
     'SourcePackage.test.cjs'
     'InDesignLifecycle.test.cjs'

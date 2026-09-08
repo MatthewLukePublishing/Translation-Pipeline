@@ -164,6 +164,7 @@ test("diagram retries resolve again and a frontier failure escapes all file retr
   const policyFailure = Object.assign(new Error("frontier changed"), { code: "LATEST_MODEL_POLICY_FAILURE" });
   const context = {
     MODEL: "gpt-frontier", REASONING_EFFORT: "xhigh", MAX_SUBSCRIPTION_RETRIES: 3,
+    TARGET_LANGUAGE: "French", EDITORIAL_POLICY: null, editorialRules: require("../Code/TranslationEditorialRules.cjs"),
     CODEX_QUERY_TIMEOUT_MS: 1000, path,
     makeInputItems: () => [{ skipTranslation: false }], buildDelimitedPrompt: () => "synthetic prompt",
     buildResponseSchema: () => ({}), writeJson() {}, writeTextAtomic() {}, removeFileIfExists() {},

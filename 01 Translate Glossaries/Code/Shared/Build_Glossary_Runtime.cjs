@@ -4,6 +4,7 @@ const XLSX = require("xlsx");
 const { writeJsonAtomicSync } = require("../../../Code/AtomicFiles.cjs");
 const { readJsonFile: readJson } = require("../../../Code/FileUtilities.cjs");
 const { resolveGlossaryProgramPath } = require("./GlossaryProgramPath.cjs");
+const { editorialPrompt } = require("../../../Code/TranslationEditorialRules.cjs");
 
 const PROGRAM_ROOT = path.resolve(__dirname, "..", "..", "..");
 const MAP_PATH = path.join(PROGRAM_ROOT, "01 Translate Glossaries", "book_glossary_map.json");
@@ -14,6 +15,10 @@ function parseArgs(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
     if (token === "--check") args.check = true;
+    else if (token === "--rules") {
+      args.rules = String(argv[++index] || "").trim();
+      if (!args.rules) throw new Error("--rules requires a target language.");
+    }
     else if (token === "--family") {
       args.family = String(argv[++index] || "").trim();
       if (!args.family) throw new Error("--family requires a value.");
@@ -185,6 +190,12 @@ async function buildFamily(map, familyName, familyConfig, checkOnly) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  if (args.rules) {
+    if (args.check || args.family) throw new Error("Use --rules separately from build/check options.");
+    console.log(editorialPrompt(args.rules, "glossary"));
+    console.log("Approved glossary entries remain authoritative. This guidance is for new or explicitly requested glossary revisions; the builder does not restyle approved terms.");
+    return;
+  }
   const map = readJson(MAP_PATH, "book/glossary map");
   if (map.schemaVersion !== 1 || map.glossaryContractVersion !== 2) {
     throw new Error(`Unsupported glossary map version in ${MAP_PATH}.`);

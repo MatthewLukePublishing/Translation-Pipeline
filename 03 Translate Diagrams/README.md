@@ -2,6 +2,11 @@
 
 Stage 3 translates text recursively across a selected folder of Adobe Illustrator files.
 
+Requests include only the diagram-relevant shared editorial rules and the
+selected language's conventions. The job records the policy hash, and each
+request verifies it again. If a book has no diagrams, skip this stage entirely;
+do not create or edit artwork merely to satisfy the pipeline sequence.
+
 - `Code/Illustrator_Translate_Diagrams_Batch.cjs` is the Node.js controller.
 - `Code/Illustrator_Translate_Diagrams.jsx` is the Illustrator worker launched by the controller.
 - The local `Reference/New Acronyms Symbols.xlsx` supplies diagram-specific labels.

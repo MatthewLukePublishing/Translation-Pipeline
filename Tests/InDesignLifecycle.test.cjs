@@ -71,8 +71,30 @@ function typographyHarness() {
     const values = { ACTION: action, DOCUMENT: documentPath, START: options.start ?? 0, COUNT: options.count ?? 25, SETTINGS: options.settings ?? [], LANGUAGE: "French" };
     return vm.runInNewContext("Array.prototype.indexOf = undefined;\n" + source.replace(/__([A-Z]+)_JS__/g, (_, key) => JSON.stringify(values[key])), context);
   }
-  return { app, doc, styles, run, counts: () => ({ saves, closes, updates }) };
+  return { app, doc, styles, run, context, counts: () => ({ saves, closes, updates }) };
 }
+
+test("editorial inventory is bounded, read-only and reads only applicable block properties", () => {
+  const h = typographyHarness();
+  h.context.BuildingBlockTypes = { CUSTOM_STRING_BUILDING_BLOCK: 1, FULL_PARAGRAPH_BUILDING_BLOCK: 2 };
+  h.doc.layers = [{ id: 1, name: "Body", visible: true, locked: false }];
+  const format = { id: 3, name: "Text", buildingBlocks: [
+    { blockType: 1, customText: "(consulter « ", get appliedDelimiter() { throw Error("Inapplicable"); } },
+    { blockType: 2, appliedDelimiter: ":", includeDelimiter: false, get customText() { throw Error("Inapplicable"); } },
+  ] };
+  h.doc.crossReferenceFormats = [format];
+  h.doc.crossReferenceSources = [{ id: 7, appliedFormat: format, sourceText: { parentStory:{id:1},contents:'reference',paragraphs: [{ appliedParagraphStyle: h.styles[0] }] }, get status() { throw Error("Undocumented property"); } }];
+  h.run("open");
+  assert.match(h.run("editorial-summary"), /^EDITORIAL_SUMMARY\|layers=1\|formats=1\|references=1\|paragraphStyles=7$/);
+  assert.match(h.run("editorial-layers"), /^LAYER\|index=0\|id=1\|name=Body/);
+  assert.match(h.run("editorial-formats", { count: 10 }), /BLOCK\|formatId=3\|index=1\|type=2\|customText=\|delimiter=%3A\|includeDelimiter=false/);
+  assert.match(h.run("editorial-references"), /^REFERENCE\|index=0\|id=7\|formatId=3\|storyId=1\|text=reference\|paragraphStyle=Style%200$/);
+  assert.match(h.run("editorial-formats", { count: 11 }), /^ERROR.*ten cross-reference/);
+  assert.match(h.run("editorial-references", { count: 26 }), /^ERROR.*twenty-five/);
+  h.doc.layers.length = 101;
+  assert.match(h.run("editorial-summary"), /^ERROR.*bounded audit limit/);
+  assert.deepEqual(h.counts(), { saves: 0, closes: 0, updates: 0 });
+});
 
 test("typography audit is bounded and never discards unrelated or modified documents", () => {
   const h = typographyHarness();
@@ -101,6 +123,27 @@ test("typography audit is bounded and never discards unrelated or modified docum
   assert.equal(h.styles[0].appliedLanguage.name, "English");
   h.doc.fullName.fsName = "C:/Synthetic/edition/book.indd";
   assert.match(h.run("close"), /^CLOSED/);
+});
+
+test("language-specific cross-reference edits cannot bypass the panel encoder", () => {
+  const h=typographyHarness();h.run("open");
+  const blocks=[{blockType:"CUSTOM_STRING_BUILDING_BLOCK",customText:"(See "},{blockType:"PARAGRAPH_TEXT_BUILDING_BLOCK"},{blockType:"CUSTOM_STRING_BUILDING_BLOCK",customText:")"}];
+  const format={id:1,name:"In the text",isValid:true,buildingBlocks:blocks};
+  h.doc.crossReferenceFormats={itemByID:id=>id===1?format:null};
+  const requested={id:1,name:"In the text",blocks:[{type:blocks[0].blockType,beforeText:"(See ",customText:"(consulter « "},{type:blocks[1].blockType},{type:blocks[2].blockType,beforeText:"stale",customText:" »)"}]};
+  assert.match(h.run("editorial-apply-format",{count:1,settings:[requested]}),/^ERROR.*panel format encoder/);
+  assert.equal(blocks[0].customText,"(See ");
+  requested.blocks[2].beforeText=")";
+  assert.match(h.run("editorial-apply-format",{count:1,settings:[requested]}),/^ERROR.*panel format encoder/);
+  assert.equal(blocks[0].customText,"(See ");
+  assert.equal(blocks[1].blockType,"PARAGRAPH_TEXT_BUILDING_BLOCK");
+  let updated=0;
+  h.doc.crossReferenceSources={itemByID:id=>id===9?{id:9,isValid:true,appliedFormat:format,update(){updated++;}}:null};
+  assert.match(h.run("editorial-update-reference",{count:1,settings:[{id:9,formatId:2}]}),/^ERROR.*panel format encoder/);
+  assert.equal(updated,0);
+  assert.match(h.run("editorial-update-reference",{count:1,settings:[{id:9,formatId:1}]}),/^ERROR.*panel format encoder/);
+  assert.equal(updated,0);
+  assert.equal(h.counts().saves,0);
 });
 
 test("typography edits touch only the requested batch and require explicit checkpoints", () => {

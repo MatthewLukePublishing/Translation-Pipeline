@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('New', 'Prepare', 'Export', 'Translate', 'Validate', 'Import', 'Finalize', 'Complete', 'Activate', 'Deactivate', 'Status', 'Archive')]
+    [ValidateSet('New', 'Prepare', 'Export', 'Translate', 'ReviewRules', 'Validate', 'Import', 'Finalize', 'Complete', 'Activate', 'Deactivate', 'Status', 'Archive')]
     [string]$Action = 'Status',
 
     [string]$Book,
@@ -495,6 +495,18 @@ function Invoke-Translation {
     }
 }
 
+function Invoke-EditorialReview {
+    $job = Get-ActiveJob
+    $preparer = Join-Path $stageTwoRoot 'Code\Prepare-EditorialReview.mjs'
+    Invoke-NodeScript -Script $preparer -JobPath $job.JobPath
+    $current = Read-JsonFile -Path (Join-Path $job.JobPath 'job_manifest.json') -Label 'job manifest'
+    if ([string]$current.status -eq 'complete') {
+        Write-Output "EDITORIAL_RULES_ALREADY_APPLIED|job=$($job.JobPath)"
+        return
+    }
+    Invoke-Translation
+}
+
 function Initialize-ProductionWorkspace {
     if (-not $Book) { throw '-Book is required for -Action Prepare.' }
     if (-not $Language) { throw '-Language is required for -Action Prepare.' }
@@ -557,6 +569,13 @@ function Invoke-ProductionFinalize {
     $manifestPath = Join-Path $job.JobPath 'job_manifest.json'
     $manifest = Read-JsonFile -Path $manifestPath -Label 'job manifest'
     if ([string]$manifest.status -ne 'imported') { throw "Only an imported production job can be finalized. Current status: $($manifest.status)" }
+    $policyHash = (Get-FileHash -LiteralPath (Join-Path $programRoot 'Code\TranslationEditorialRules.json') -Algorithm SHA256).Hash
+    if ($manifest.qa.status -ne 'passed' -or $manifest.qa.editorialRules.sha256 -ne $policyHash -or $manifest.import.editorialRules.sha256 -ne $policyHash) {
+        throw 'Finalization requires QA and ICML import under the current editorial rules.'
+    }
+    if ((Get-FileHash -LiteralPath ([string]$job.Config.paths.outputWorkbook) -Algorithm SHA256).Hash -ne $manifest.import.workbookSha256) {
+        throw 'The workbook changed after ICML import; revalidate and re-import before layout changes.'
+    }
 
     $productionWorkspace = Get-ValidatedProductionWorkspace -Config $job.Config
     $documentPath = $productionWorkspace.DocumentPath
@@ -575,6 +594,8 @@ function Invoke-ProductionFinalize {
     $auditReportPath = Join-Path $job.JobPath 'reports\layout_audit_final.json'
     $productsRoot = Get-ConfiguredProductsRoot
     & $translationStyleSetterPath -DocumentPath $documentPath -TargetLanguage ([string]$job.Config.targetLanguage) -SettingsPath $resolvedSettings -ReportPath $styleReportPath -ProductsRoot $productsRoot
+    & (Join-Path $stageTwoRoot 'Code\InDesign\Set-InDesignEditorialRules.ps1') -JobPath $job.JobPath -NodePath $codexNodePath -ProductsRoot $productsRoot
+    & (Join-Path $stageTwoRoot 'Code\InDesign\Invoke-InDesignGrepRules.ps1') -JobPath $job.JobPath -NodePath $codexNodePath -Mode Verify -ProductsRoot $productsRoot
     & $typographyAuditPath -DocumentPath $documentPath -ReportPath $auditReportPath -ProductsRoot $productsRoot
 
     $audit = Read-JsonFile -Path $auditReportPath -Label 'final layout audit'
@@ -595,6 +616,12 @@ function Invoke-ProductionFinalize {
     }
 
     $manifest | Add-Member -NotePropertyName layoutFinalization -NotePropertyValue ([ordered]@{
+        editorialPolicySha256 = (Get-FileHash -LiteralPath (Join-Path $programRoot 'Code\TranslationEditorialRules.json') -Algorithm SHA256).Hash
+        editorialReport = (Join-Path $job.JobPath 'reports\editorial_layout_application.json')
+        editorialReportSha256 = (Get-FileHash -LiteralPath (Join-Path $job.JobPath 'reports\editorial_layout_application.json') -Algorithm SHA256).Hash
+        grepPolicySourceSha256 = (Get-FileHash -LiteralPath (Join-Path $programRoot 'Code\TranslationGrepRules.cjs') -Algorithm SHA256).Hash
+        grepReport = (Join-Path $job.JobPath 'reports\grep_verification.json')
+        grepReportSha256 = (Get-FileHash -LiteralPath (Join-Path $job.JobPath 'reports\grep_verification.json') -Algorithm SHA256).Hash
         completedAt = [DateTime]::UtcNow.ToString('o')
         settingsPath = $resolvedSettings
         auditReport = $auditReportPath
@@ -673,14 +700,25 @@ function Assert-ProductionCompletionEvidence {
         [Parameter(Mandatory)] $Manifest,
         [Parameter(Mandatory)] [string]$DocumentPath,
         [Parameter(Mandatory)] [string]$LayoutAuditPath,
-        [Parameter(Mandatory)] [string]$WorkbookPath
+        [Parameter(Mandatory)] [string]$WorkbookPath,
+        [Parameter(Mandatory)] [string]$EditorialPolicyPath,
+        [Parameter(Mandatory)] [string]$GrepPolicyPath
     )
     if ([string]$Manifest.qa.status -ne 'passed') { throw 'Completion requires passed translation QA.' }
+    $currentPolicyHash = (Get-FileHash -LiteralPath $EditorialPolicyPath -Algorithm SHA256).Hash
+    foreach ($recordedPolicy in @($Manifest.qa.editorialRules.sha256, $Manifest.import.editorialRules.sha256, $Manifest.layoutFinalization.editorialPolicySha256)) {
+        if (-not $recordedPolicy -or -not ([string]$recordedPolicy).Equals($currentPolicyHash, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Completion requires translation QA, ICML import and layout under the current editorial policy.'
+        }
+    }
     $expected = @(
         @{ Path = $DocumentPath; Hash = [string]$Manifest.layoutFinalization.documentSha256; Label = 'finalized document' }
         @{ Path = $LayoutAuditPath; Hash = [string]$Manifest.layoutFinalization.auditSha256; Label = 'final layout audit' }
         @{ Path = $WorkbookPath; Hash = [string]$Manifest.import.workbookSha256; Label = 'imported workbook' }
         @{ Path = $WorkbookPath; Hash = [string]$Manifest.qa.hashes.outputWorkbookSha256; Label = 'QA workbook' }
+        @{ Path = [string]$Manifest.layoutFinalization.editorialReport; Hash = [string]$Manifest.layoutFinalization.editorialReportSha256; Label = 'editorial layout report' }
+        @{ Path = $GrepPolicyPath; Hash = [string]$Manifest.layoutFinalization.grepPolicySourceSha256; Label = 'GREP policy' }
+        @{ Path = [string]$Manifest.layoutFinalization.grepReport; Hash = [string]$Manifest.layoutFinalization.grepReportSha256; Label = 'native GREP verification' }
     )
     foreach ($item in $expected) {
         if ($item.Hash -notmatch '^[A-Fa-f0-9]{64}$' -or -not (Test-Path -LiteralPath $item.Path -PathType Leaf)) {
@@ -715,7 +753,11 @@ function Complete-ProductionJob {
     $productionWorkspace = Get-ValidatedProductionWorkspace -Config $job.Config
     $documentPath = $productionWorkspace.DocumentPath
     $layoutAuditPath = Join-Path $job.JobPath 'reports\layout_audit_final.json'
-    Assert-ProductionCompletionEvidence -Manifest $manifest -DocumentPath $documentPath -LayoutAuditPath $layoutAuditPath -WorkbookPath (Join-Path $job.JobPath 'output\content_import.xlsx')
+    Assert-ProductionCompletionEvidence -Manifest $manifest -DocumentPath $documentPath -LayoutAuditPath $layoutAuditPath -WorkbookPath (Join-Path $job.JobPath 'output\content_import.xlsx') -EditorialPolicyPath (Join-Path $programRoot 'Code\TranslationEditorialRules.json') -GrepPolicyPath (Join-Path $programRoot 'Code\TranslationGrepRules.cjs')
+    $editorialLayout = Read-JsonFile -Path ([string]$manifest.layoutFinalization.editorialReport) -Label 'editorial layout report'
+    if ($editorialLayout.status -ne 'passed' -or $editorialLayout.documentSha256 -ne $manifest.layoutFinalization.documentSha256) { throw 'The editorial layout report does not pass for the finalized document.' }
+    $grepVerification = Read-JsonFile -Path ([string]$manifest.layoutFinalization.grepReport) -Label 'native GREP verification'
+    if ($grepVerification.status -ne 'passed' -or $grepVerification.method -ne 'indesign_native_grep' -or $grepVerification.documentSha256 -ne $manifest.layoutFinalization.documentSha256) { throw 'All applicable GREP formulas must pass in the native engine for the finalized document.' }
     $layoutAudit = Read-JsonFile -Path $layoutAuditPath -Label 'final layout audit'
     if ([int]$layoutAudit.overflow.storyCount -ne 0) { throw 'The final layout audit contains overset stories.' }
     if ([string]$layoutAudit.tableAudit.status -ne 'complete' -or [int]$layoutAudit.overflow.cellCount -ne 0) { throw 'The final layout audit must completely check table cells without clipped text.' }
@@ -746,6 +788,10 @@ function Complete-ProductionJob {
         $completedAt = [DateTime]::UtcNow.ToString('o')
         $manifest.status = 'complete'
         $manifest.updatedAt = $completedAt
+        if ($manifest.editorialReview) {
+            $manifest.editorialReview.status = 'complete'
+            $manifest.editorialReview | Add-Member -NotePropertyName completedAt -NotePropertyValue $completedAt -Force
+        }
         $manifest | Add-Member -NotePropertyName completion -NotePropertyValue ([ordered]@{
             completedAt = $completedAt
             documentSha256 = $documentSha256
@@ -867,6 +913,7 @@ switch ($Action) {
     'Prepare' { Initialize-ProductionWorkspace }
     'Export' { Invoke-ProductionExport }
     'Translate' { Invoke-Translation }
+    'ReviewRules' { Invoke-EditorialReview }
     'Validate' { Invoke-Validation }
     'Import' { Invoke-ProductionImport }
     'Finalize' { Invoke-ProductionFinalize }

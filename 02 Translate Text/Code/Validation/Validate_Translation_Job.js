@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import XLSX from "../../../Code/SheetJsNode.mjs";
 import fileUtilities from "../../../Code/FileUtilities.cjs";
 import textNormalization from "../../../Code/TextNormalization.cjs";
+import editorialRules from "../../../Code/TranslationEditorialRules.cjs";
 import transactionalFiles from "../../../Code/TransactionalFileReplacement.cjs";
 import { fnv1a32Utf16 } from "../ContentFingerprint.mjs";
 import { normalizeContentId } from "../ContentIds.mjs";
@@ -21,6 +22,7 @@ import { isStrictlyInside, pathsEqual } from "../PathSafety.mjs";
 import { loadProtectedSourceManifest } from "../ProtectedSourceManifest.mjs";
 import { CONTENT_EXPORT_HEADERS, assertLiteralXlsxWorkbook, firstPopulatedExtraCell } from "../WorkbookContract.mjs";
 import { createIssueCollector } from "./IssueCollector.mjs";
+import {loadPanelManagedContent} from '../PanelManagedReferences.mjs';
 
 const { readJsonFileRequired: readJson } = fileUtilities;
 const { normalizeCellValue } = textNormalization;
@@ -324,6 +326,7 @@ async function main() {
     }
   }
   const protectedSourceIds = readProtectedSourceIds(jobPath, config);
+  const panelManaged = loadPanelManagedContent(config, manifest);
   const bookInstructions = readBookTranslationInstructions(jobPath, config);
   const excludedGlossarySources = new Set(
     bookInstructions.glossarySourceTermExclusions.map((sourceTerm) => sourceTerm.toLocaleLowerCase("en-US"))
@@ -385,6 +388,10 @@ async function main() {
     const sourceSegment = String(sourceRow[3] ?? "");
     const outputSegment = String(outputRow[3] ?? "");
     const protectedSource = protectedSourceIds.has(normalizedContentId);
+    const panelReference = panelManaged.has(normalizedContentId);
+    if (panelReference && outputSegment !== panelManaged.get(normalizedContentId)) {
+      addIssue("error", "PANEL_REFERENCE_CACHE_CHANGED", "Generated cross-reference text may change only through the InDesign panel encoder.", {row:r+1,column:4,contentId});
+    }
     if (protectedSource) {
       protectedContentIdsChecked++;
       if (sourceSegment !== outputSegment) {
@@ -442,7 +449,7 @@ async function main() {
     }
 
     const languageCheckSource = maskBookProtectedSourcePhrases(sourceSegment, bookInstructions);
-    const translationEligible = !protectedSource && visibleLetters(languageCheckSource).length >= 4;
+    const translationEligible = !protectedSource && !panelReference && visibleLetters(languageCheckSource).length >= 4;
     if (translationEligible) translationEligibleSegments++;
     if (translationEligible && sourceSegment.trim() === outputSegment.trim()) {
       unchangedTranslationSegments++;
@@ -453,7 +460,7 @@ async function main() {
       });
     }
 
-    if (!protectedSource && bookInstructions.applied) {
+    if (!protectedSource && !panelReference && bookInstructions.applied) {
       for (const rule of bookInstructions.forbiddenTargetPatterns) {
         bookInstructionChecksApplied++;
         const match = configuredPattern(rule).exec(outputSegment);
@@ -542,12 +549,32 @@ async function main() {
     glossaryChecks.filter((check) => !excludedGlossarySources.has(check.source.toLocaleLowerCase("en-US")))
   );
 
+  const editorialPolicy = editorialRules.resolveEditorialRules(config.targetLanguage, "text");
+  if (config.editorialRules && config.editorialRules.sha256 !== editorialPolicy.sha256) {
+    addIssue("error", "EDITORIAL_POLICY_CHANGED", "The editorial policy changed after this review was prepared; prepare a new review before import.");
+  }
+  if (config.editorialRules && manifest.subscriptionTranslation?.editorialRules?.sha256 !== editorialPolicy.sha256) {
+    addIssue("error", "EDITORIAL_REVIEW_INCOMPLETE", "The output has no completed translation review under the current editorial policy.");
+  }
+  for (let r = 1; r < rowsToCheck; r++) {
+    const contentId = String(source.data[r]?.[2] ?? "");
+    if (protectedSourceIds.has(normalizeContentId(contentId)) || panelManaged.has(normalizeContentId(contentId))) continue;
+    const sourceText = String(source.data[r]?.[3] ?? "");
+    const protectedStrings = [
+      ...bookInstructions.preserveSourcePatterns.flatMap(rule => [...sourceText.matchAll(configuredPattern(rule))].map(match => match[0])),
+      ...effectiveGlossaryChecks.map(check => check.target),
+    ].filter(Boolean);
+    for (const issue of editorialRules.auditEditorialText(output.data[r]?.[3], config.targetLanguage, { protectedStrings, languageRules: editorialPolicy.language })) {
+      addIssue(issue.severity, issue.code, issue.message, { row: r + 1, column: 4, contentId });
+    }
+  }
+
   let glossaryChecksApplied = 0;
   for (let r = 1; r < rowsToCheck; r++) {
     const sourceSegment = String(source.data[r]?.[3] ?? "");
     const outputSegment = String(output.data[r]?.[3] ?? "");
     const contentId = String(source.data[r]?.[2] ?? "");
-    if (protectedSourceIds.has(normalizeContentId(contentId))) continue;
+    if (protectedSourceIds.has(normalizeContentId(contentId)) || panelManaged.has(normalizeContentId(contentId))) continue;
     const tab = sourceSegment.indexOf("\t");
     if (tab >= 0 && sourceSegment.indexOf("\t", tab + 1) < 0) {
       const tableKey = `${sourceSegment.slice(0, tab).trim()}\u0000${sourceSegment.slice(tab + 1).trim()}`;
@@ -591,6 +618,7 @@ async function main() {
     targetLanguage: String(config.targetLanguage || ""),
     glossaryProfile: String(config.glossaryProfile || ""),
     status,
+    editorialRules: { version: editorialPolicy.version, sha256: editorialPolicy.sha256, language: editorialPolicy.language.language },
     summary: {
       errors,
       warnings,
@@ -648,6 +676,7 @@ async function main() {
   manifest.updatedAt = new Date().toISOString();
   manifest.qa = {
     status,
+    editorialRules: report.editorialRules,
     completedAt: report.generatedAt,
     summary: report.summary,
     hashes: report.hashes,

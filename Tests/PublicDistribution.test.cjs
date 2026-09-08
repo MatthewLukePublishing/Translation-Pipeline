@@ -23,7 +23,7 @@ const PRIVATE_PATHS = [
   /^03 Translate Diagrams\/(?:Reference\/|Working Files\/|Output\/)/i,
   /^04 Translate Comic Captions\/(?:Working Files\/|Output\/)/i,
   /^Tests\/(?:DataContracts\.test\.cjs|Run-Tests\.ps1)$/i,
-  /(?:^|\/)(?:node_modules|logs|reports|state|debug_payloads|subscription_state)(?:\/|$)/i,
+  /(?:^|\/)(?:node_modules|logs|reports|state|debug_payloads|subscription_state|outputs|\.tmp)(?:\/|$)/i,
 ];
 
 function trackedFiles() {

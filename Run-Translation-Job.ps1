@@ -527,6 +527,9 @@ function Invoke-ProductionImport {
     if (-not $job.Config.productionWorkspace) {
         throw 'Automated import is available only for a prepared production workspace. Use the Scripts-panel importer for a standard job.'
     }
+    # Validate the exact current workbook before deciding whether this is only
+    # a resumable link refresh or a new, required ICML import.
+    Invoke-NodeScript -Script $validatorPath -JobPath $job.JobPath
     $manifest = Read-JsonFile -Path (Join-Path $job.JobPath 'job_manifest.json') -Label 'job manifest'
     if ([string]$manifest.status -notin @('ready_for_import', 'imported') -or [string]$manifest.qa.status -ne 'passed') {
         throw "The production job has not passed Step 2 validation or reached resumable import state. Current status: $($manifest.status)"
@@ -690,6 +693,16 @@ function Assert-ProductionCompletionEvidence {
     }
 }
 
+function Resolve-CompletionSubscriptionModel {
+    param([Parameter(Mandatory)] [string]$RecordedModel, [Parameter(Mandatory)] [string]$RecordedEffort)
+    if ($RecordedEffort -ne 'xhigh') { throw 'Completion requires xhigh reasoning for the recorded job.' }
+    $resolution = Resolve-LatestSubscriptionModel
+    if ([string]$resolution.model -ne $RecordedModel -or [string]$resolution.reasoningEffort -ne 'xhigh') {
+        throw 'The official frontier changed during the job. Completion is blocked; no older-model fallback is permitted.'
+    }
+    return $resolution
+}
+
 function Complete-ProductionJob {
     $job = Get-ActiveJob
     if (-not $job.Config.productionWorkspace) { throw 'Use -Action Archive for a standard job.' }
@@ -717,6 +730,9 @@ function Complete-ProductionJob {
     if ($job.Config.protectedSourceRules -and -not (Test-Path -LiteralPath ([string]$job.Config.protectedSourceContentManifest) -PathType Leaf)) {
         throw 'The protected-source content manifest is missing.'
     }
+    $workspaceManifestPath = [string]$job.Config.productionWorkspace.workspaceManifest
+    if (-not $workspaceManifestPath) { throw 'The configured workspace manifest path is missing.' }
+    $workspaceManifest = Read-JsonFile -Path $workspaceManifestPath -Label 'translation workspace manifest'
     $documentSha256 = (Get-FileHash -LiteralPath $documentPath -Algorithm SHA256).Hash
     if ($manifestStatus -eq 'complete') {
         $completedAt = [string]$manifest.completion.completedAt
@@ -726,18 +742,18 @@ function Complete-ProductionJob {
             throw 'The completed job manifest is incomplete or its document hash no longer matches the production INDD.'
         }
     } else {
+        $completionModelResolution = Resolve-CompletionSubscriptionModel -RecordedModel ([string]$job.Config.model) -RecordedEffort ([string]$job.Config.reasoningEffort)
         $completedAt = [DateTime]::UtcNow.ToString('o')
         $manifest.status = 'complete'
         $manifest.updatedAt = $completedAt
         $manifest | Add-Member -NotePropertyName completion -NotePropertyValue ([ordered]@{
             completedAt = $completedAt
             documentSha256 = $documentSha256
+            modelResolution = $completionModelResolution
         }) -Force
         Write-Utf8Json -Path $manifestPath -Value $manifest
     }
 
-    $workspaceManifestPath = Join-Path ([string]$job.Config.productionWorkspace.root) 'Translation Workspace.json'
-    $workspaceManifest = Read-JsonFile -Path $workspaceManifestPath -Label 'translation workspace manifest'
     $workspaceManifest.status = 'complete'
     $workspaceManifest | Add-Member -NotePropertyName completedAt -NotePropertyValue $completedAt -Force
     $workspaceManifest | Add-Member -NotePropertyName outputDocumentSha256 -NotePropertyValue $documentSha256 -Force

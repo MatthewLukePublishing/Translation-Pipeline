@@ -28,4 +28,25 @@ $manifest.layoutFinalization.auditSha256 = ''
 $rejected = $false
 try { Assert-ProductionCompletionEvidence @arguments } catch { $rejected = $_.Exception.Message -like '*Missing completion evidence*' }
 if (-not $rejected) { throw 'An unbound legacy audit must require a fresh finalization.' }
-Write-Output 'COMPLETION_EVIDENCE_TEST_OK|cases=5|adobeCalls=0'
+$modelDefinition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Resolve-CompletionSubscriptionModel' }, $true)
+. ([scriptblock]::Create($modelDefinition.Extent.Text))
+$script:liveModel = 'frontier-fixture'
+$script:resolutionCalls = 0
+function Resolve-LatestSubscriptionModel {
+    $script:resolutionCalls++
+    if ($script:liveModel -eq 'unavailable') { throw 'Live discovery unavailable' }
+    return [pscustomobject]@{ model = $script:liveModel; reasoningEffort = 'xhigh' }
+}
+$null = Resolve-CompletionSubscriptionModel -RecordedModel 'frontier-fixture' -RecordedEffort 'xhigh'
+foreach ($next in @('new-frontier', 'unavailable')) {
+    $script:liveModel = $next
+    $rejected = $false
+    try { $null = Resolve-CompletionSubscriptionModel -RecordedModel 'frontier-fixture' -RecordedEffort 'xhigh' } catch { $rejected = $true }
+    if (-not $rejected) { throw 'A changed or unavailable frontier must block completion.' }
+}
+if ($script:resolutionCalls -ne 3) { throw 'Each completion attempt must resolve live.' }
+$completionDefinition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Complete-ProductionJob' }, $true)
+if ($completionDefinition.Extent.Text -notmatch '\$workspaceManifestPath = \[string\]\$job.Config.productionWorkspace.workspaceManifest') {
+    throw 'Completion must use the configured central or legacy workspace manifest.'
+}
+Write-Output 'COMPLETION_EVIDENCE_TEST_OK|cases=9|adobeCalls=0'

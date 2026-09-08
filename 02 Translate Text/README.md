@@ -57,6 +57,17 @@ From the repository root:
 
 Use `Status` for the current state, `Validate` after an authorized workbook correction, and `Export` to resume Adobe relinking that was deferred because another InDesign document was open. `Import` verifies the QA workbook hash, payload fingerprint, ICML snapshot, and exact Content-ID coverage before starting its recoverable multi-file transaction.
 
+`Import` first validates the current workbook. When bytes or payload changed after
+an earlier import, QA atomically invalidates the old import/finalization evidence.
+A valid edited workbook becomes `ready_for_import`; invalid edits become
+`qa_failed`. Only the unchanged, already-imported workbook can resume link refresh
+without reimporting. No manual manifest reset is required.
+Re-import verifies the complete previous successful ICML output set by path and
+SHA-256, instead of requiring the now-superseded English export. Missing evidence
+or later ICML edits still block all writes; user changes are never overwritten.
+Completion resolves the live frontier again, records that evidence, and refuses
+to complete if the frontier changed or discovery fails during layout work.
+
 Before any InDesign action, save and close unrelated documents. Adobe operations must run serially.
 
 Finalization requires both zero overset stories and zero overflowing table cells.

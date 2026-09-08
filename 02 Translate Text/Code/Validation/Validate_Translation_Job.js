@@ -286,6 +286,7 @@ async function main() {
     throw new Error(`Job configuration and manifest IDs disagree: ${manifestPath}`);
   }
   const manifestStatusBeforeQa = String(manifest.status || "");
+  let importStillCurrent = manifestStatusBeforeQa === "imported";
   if (!["translated", "ready_for_import", "qa_failed", "imported"].includes(manifestStatusBeforeQa)) {
     throw new Error(
       `Job manifest status must be translated, ready_for_import, qa_failed, or imported before QA; found "${manifest.status || "(blank)"}".`
@@ -307,10 +308,7 @@ async function main() {
     ).toUpperCase();
     const actualImportedWorkbookHash = sha256(outputPath);
     if (!expectedImportedWorkbookHash || actualImportedWorkbookHash !== expectedImportedWorkbookHash) {
-      throw new Error(
-        "The translated workbook changed after it was imported. Re-import is required before QA can preserve imported status. " +
-        `Expected ${expectedImportedWorkbookHash || "(missing)"}; found ${actualImportedWorkbookHash}.`
-      );
+      importStillCurrent = false;
     }
   }
 
@@ -322,9 +320,7 @@ async function main() {
     ).toUpperCase();
     const actualImportedPayload = importPayloadSha256(output.data);
     if (expectedImportedPayload && actualImportedPayload !== expectedImportedPayload) {
-      throw new Error(
-        `The translated payload changed after import. Expected ${expectedImportedPayload}; found ${actualImportedPayload}.`
-      );
+      importStillCurrent = false;
     }
   }
   const protectedSourceIds = readProtectedSourceIds(jobPath, config);
@@ -634,9 +630,21 @@ async function main() {
     },
   };
 
-  manifest.status = manifestStatusBeforeQa === "imported"
-    ? "imported"
-    : (status === "passed" ? "ready_for_import" : "qa_failed");
+  if (manifestStatusBeforeQa === "imported" && !importStillCurrent) {
+    // Retain only the most recent superseded evidence, not an unbounded history.
+    // Publication is atomic with QA below, so a changed workbook cannot inherit
+    // imported/finalized status, even when its new text passes all checks.
+    manifest.invalidatedImport = {
+      invalidatedAt: report.generatedAt,
+      reason: "Workbook bytes or payload changed; re-import and finalization required.",
+      import: manifest.import || null,
+      layoutFinalization: manifest.layoutFinalization || null,
+    };
+    delete manifest.import;
+    delete manifest.layoutFinalization;
+  }
+  manifest.status = status !== "passed" ? "qa_failed"
+    : (importStillCurrent ? "imported" : "ready_for_import");
   manifest.updatedAt = new Date().toISOString();
   manifest.qa = {
     status,

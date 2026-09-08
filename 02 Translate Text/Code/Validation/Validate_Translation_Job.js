@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import { fileURLToPath } from "node:url";
-import XLSX from "xlsx";
+import XLSX from "../../../Code/SheetJsNode.mjs";
 import fileUtilities from "../../../Code/FileUtilities.cjs";
 import textNormalization from "../../../Code/TextNormalization.cjs";
 import transactionalFiles from "../../../Code/TransactionalFileReplacement.cjs";
@@ -149,7 +149,7 @@ function extractMarkupTags(text) {
 }
 
 function extractLineBreaks(text) {
-  return String(text || "").match(/\r\n|\r|\n/g) || [];
+  return String(text || "").match(/\r\n|[\r\n\u2028\u2029]/g) || [];
 }
 
 function boundaryWhitespace(text) {
@@ -206,6 +206,7 @@ function collectGlossaryChecks(payload, kind, termKey, definitionKey) {
           source: definitionSource,
           target: definitionTarget,
           kind: "definition",
+          sourceTerm: source,
           type: "phrase",
         });
       }

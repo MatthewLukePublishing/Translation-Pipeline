@@ -3,13 +3,15 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
-import XLSX from "xlsx";
+import XLSX from "../../Code/SheetJsNode.mjs";
 import atomicFiles from "../../Code/AtomicFiles.cjs";
 import { fnv1a32Utf16 } from "./ContentFingerprint.mjs";
 import { normalizeContentId } from "./ContentIds.mjs";
 import { buildContentGroups } from "./ContentGroups.mjs";
 import { isStrictlyInside, pathsEqual } from "./PathSafety.mjs";
+import { isProductionJobLocation } from "./SourcePackage.mjs";
 import { CONTENT_EXPORT_HEADERS, assertLiteralXlsxWorkbook, firstPopulatedExtraCell } from "./WorkbookContract.mjs";
 
 const { writeJsonAtomicSync } = atomicFiles;
@@ -58,8 +60,9 @@ if (!config.productionWorkspace) throw new Error("Origin manifests are only supp
 const inputPath = path.join(cli.job, "input", "content_export.xlsx");
 const workspaceRoot = path.resolve(String(config.productionWorkspace.root || ""));
 const textFolder = path.resolve(String(config.productionWorkspace.textFolder || ""));
-if (!isStrictlyInside(cli.job, workspaceRoot) || !isStrictlyInside(textFolder, workspaceRoot)) {
-  throw new Error("Translation job or Text folder is outside the isolated production workspace.");
+const centralJobsRoot = fileURLToPath(new URL("../Jobs/", import.meta.url));
+if (!isProductionJobLocation(cli.job, workspaceRoot, centralJobsRoot) || !isStrictlyInside(textFolder, workspaceRoot)) {
+  throw new Error("Translation job or Text folder is outside its authorized boundary.");
 }
 if (!isStrictlyInside(inputPath, cli.job)) throw new Error("Origin workbook is outside the translation job.");
 const artifactNodeModules = process.env.CODEX_ARTIFACT_NODE_MODULES;

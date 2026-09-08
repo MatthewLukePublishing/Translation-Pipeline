@@ -34,6 +34,9 @@ foreach ($script in $powerShellScripts) {
 
 $contractTests = @(
     'SharedContracts.test.cjs'
+    'LiveModelPolicy.test.cjs'
+    'SourcePackage.test.cjs'
+    'InDesignLifecycle.test.cjs'
     'PipelineRegression.test.cjs'
     'PublicDistribution.test.cjs'
 ) | ForEach-Object { Join-Path $PSScriptRoot $_ }
@@ -46,4 +49,3 @@ foreach ($testScript in $powerShellTests) {
 }
 
 Write-Output "TRANSLATE_PUBLIC_TESTS_OK|nodeSyntax=$($scripts.Count)|powerShellSyntax=$($powerShellScripts.Count)|nodeTestFiles=$($contractTests.Count)|powerShellTestFiles=$($powerShellTests.Count)"
-

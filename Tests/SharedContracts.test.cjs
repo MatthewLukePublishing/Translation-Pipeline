@@ -14,6 +14,88 @@ function importFile(...segments) {
   return import(pathToFileURL(path.join(ROOT, ...segments)).href);
 }
 
+test("targeted rechecks retain valid groups and fail closed on model/query errors", async () => {
+  const { validateWithTargetedRecheck } = await importFile("02 Translate Text", "Code", "BatchRecheck.mjs");
+  const batch = { batchId: "batch_1", groups: ["a", "b"].map(groupId => ({ groupId, sourceSegments: ["source "] })) };
+  const response = { batch_id: "batch_1", groups: [{ group_id: "a", segments: ["valid "] }, { group_id: "b", segments: ["invalid"] }] };
+  function validate(value, source) {
+    assert.equal(value.batch_id, source.batchId);
+    assert.equal(value.groups.length, source.groups.length);
+    for (const group of value.groups) if (!group.segments[0].endsWith(" ")) throw new Error("Boundary whitespace changed");
+    return value.groups;
+  }
+  let queries = 0;
+  const options = { response, batch, validate, query: async (repairBatch, context, attempt) => {
+    queries++;
+    assert.deepEqual(repairBatch.groups.map(g => g.groupId), ["b"]);
+    assert.equal(repairBatch.segmentCount, 1);
+    assert.equal(context[0].validation_error, "Boundary whitespace changed");
+    assert.equal(attempt, 1);
+    return { batch_id: repairBatch.batchId, groups: [{ group_id: "b", segments: ["rephrased "] }] };
+  } };
+  const result = await validateWithTargetedRecheck(options);
+  assert.equal(queries, 1);
+  assert.equal(result.response.groups[0], response.groups[0], "valid translations must remain exactly unchanged");
+  assert.equal(response.groups[1].segments[0], "invalid", "keep the original draft intact");
+  assert.equal(result.response.groups[1].segments[0], "rephrased ");
+  await assert.rejects(validateWithTargetedRecheck({ ...options, query: async () => { throw new Error("Frontier changed"); } }), /Frontier changed/);
+  await assert.rejects(validateWithTargetedRecheck({ ...options, attempt: 2 }), /recheck limit reached/);
+  await assert.rejects(validateWithTargetedRecheck({ ...options, response: { ...response, groups: [response.groups[0]] } }), /Expected values/);
+  const identities = [];
+  const capture = async repairBatch => {
+    identities.push(repairBatch.batchId);
+    return { batch_id: repairBatch.batchId, groups: repairBatch.groups.map(group => ({ group_id: group.groupId, segments: ["valid "] })) };
+  };
+  await validateWithTargetedRecheck({ ...options, query: capture });
+  await validateWithTargetedRecheck({ ...options, query: capture });
+  await validateWithTargetedRecheck({ ...options, query: capture, response: { ...response, groups: response.groups.map(group => ({ ...group, segments: ["different invalid draft"] })) } });
+  assert.equal(identities[0], identities[1], "identical rechecks can resume their saved query");
+  assert.notEqual(identities[0], identities[2], "a different failed subset/draft must not reuse an unrelated cached recheck");
+});
+
+test("line-break encoding is restored without inventing or dropping separators", async () => {
+  const { lineBreaks, restoreLineBreakKinds, lockLineBreaks, restoreLockedLineBreaks } = await importFile("02 Translate Text", "Code", "LineBreaks.mjs");
+  assert.equal(restoreLineBreakKinds("A\u2028B\nC", "Un\nDeux\u2029Trois"), "Un\u2028Deux\nTrois");
+  assert.deepEqual(lineBreaks("A\r\nB\rC\nD\u2028E\u2029F"), ["\r\n", "\r", "\n", "\u2028", "\u2029"]);
+  assert.equal(restoreLineBreakKinds("A\u2028B", "Un Deux"), "Un Deux");
+  assert.equal(restoreLineBreakKinds("A", "Un\nDeux"), "Un\nDeux");
+  assert.equal(restoreLineBreakKinds("A\u2028B", "Un\u000bDeux"), "Un\u2028Deux");
+  assert.equal(restoreLineBreakKinds("A", "Un\u000bDeux"), "Un\u000bDeux", "an invented break remains invalid for XML validation");
+  const protectedBreaks = lockLineBreaks("A\u2028B\nC", "group_1", 0);
+  assert.equal(restoreLockedLineBreaks(protectedBreaks.text, protectedBreaks.locks), "A\u2028B\nC");
+  assert.throws(() => restoreLockedLineBreaks("Un\u2028Deux\nTrois", protectedBreaks.locks), /line-break token/);
+  assert.throws(() => restoreLockedLineBreaks(protectedBreaks.text + protectedBreaks.locks[0].token, protectedBreaks.locks), /line-break token/);
+  assert.equal(restoreLockedLineBreaks("Un\u2028Deux\nTrois", protectedBreaks.locks, false), "Un\u2028Deux\nTrois");
+});
+
+test("official headquarters-unit qualifiers are preserved atomically, not partly translated", async () => {
+  const { configuredPattern } = await importFile("02 Translate Text", "Code", "BookTranslationRules.mjs");
+  const rule = { id: "official_unit_type_abbreviation", pattern: "\\b(?:Bn|Co)\\.", flags: "gu" };
+  const source = "Headquarters and Headquarters Bn., Headquarters and Service Co., Headquarters Co., Bn.; headquarters staff";
+  assert.deepEqual([...source.matchAll(configuredPattern(rule))].map(match => match[0]), [
+    "Headquarters and Headquarters Bn.", "Headquarters and Service Co.", "Headquarters Co.", "Bn.",
+  ]);
+  assert.equal(source.replace(configuredPattern(rule), "LOCK").includes("headquarters staff"), true);
+  assert.equal(configuredPattern({ ...rule, id: "custom_rule" }).source, rule.pattern, "custom patterns retain their configured meaning");
+});
+
+test("ambiguous expanded definitions require context while explicit glossary conflicts still fail", async () => {
+  const glossary = await importFile("02 Translate Text", "Code", "GlossaryResolution.mjs");
+  const entries = glossary.compileGlossaryEntries([
+    { source: "Captain", target: "Capitaine de vaisseau", sourceTerm: "CAPT", kind: "definition" },
+    { source: "Captain", target: "Capitaine", sourceTerm: "CPT", kind: "definition" },
+    { source: "CPT", target: "Cne", kind: "term" },
+  ]);
+  const captain = entries.find(entry => entry.source === "Captain");
+  assert.equal(captain.contextual, true);
+  assert.equal(captain.alternatives.length, 2);
+  assert.equal(glossary.glossaryEntryApplies("Captain", captain), false);
+  assert.deepEqual(glossary.resolveGlossaryEntriesForText("Captain or CPT", entries).map(item => item.entry.source), ["CPT"]);
+  assert.throws(() => glossary.compileGlossaryEntries([
+    { source: "CPT", target: "A", kind: "term" }, { source: "CPT", target: "B", kind: "term" },
+  ]), /Conflicting glossary targets/);
+});
+
 test("content groups use literal column A boundaries and preserve whitespace segments", async () => {
   const groupsModule = await importFile("02 Translate Text", "Code", "ContentGroups.mjs");
   const rows = [
@@ -61,14 +143,14 @@ test("glossary resolution gives exact case priority and suppresses ambiguous fal
   );
 });
 
-test("latest subscription model comes from the visible Codex harness catalog", async () => {
+test("live official frontier identity overrides catalog ranking and description", async () => {
   const resolver = await importFile("02 Translate Text", "Code", "Resolve-LatestSubscriptionModel.mjs");
   const selected = resolver.selectLatestCatalogModel({
     models: [
       {
         slug: "gpt-5.5",
         visibility: "list",
-        priority: 2,
+        priority: 0,
         description: "Frontier model.",
         supported_reasoning_levels: [{ effort: "xhigh" }],
       },
@@ -87,7 +169,7 @@ test("latest subscription model comes from the visible Codex harness catalog", a
         supported_reasoning_levels: [{ effort: "xhigh" }],
       },
     ],
-  });
+  }, "gpt-5.6-sol");
   assert.equal(selected.slug, "gpt-5.6-sol");
   assert.doesNotThrow(() => resolver.assertModelSupportsEffort(selected, "xhigh"));
 });
@@ -111,7 +193,7 @@ test("latest-model resolution refuses an older fallback for reasoning effort", a
         supported_reasoning_levels: [{ effort: "xhigh" }],
       },
     ],
-  });
+  }, "gpt-newest");
   assert.equal(selected.slug, "gpt-newest");
   assert.throws(
     () => resolver.assertModelSupportsEffort(selected, "xhigh"),

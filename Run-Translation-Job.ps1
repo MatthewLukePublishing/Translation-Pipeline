@@ -12,6 +12,8 @@ param(
     [string]$EditionName,
     [string]$InteriorsPath,
     [string]$WorkspacePath,
+    [string]$SourcePackagePath,
+    [switch]$DeferRelink,
     [string]$ProductsRoot,
     [string]$LayoutSettingsPath,
     [ValidateSet('CodexSubscription')]
@@ -199,10 +201,13 @@ function Invoke-SubscriptionTranslator {
         if ($script:maxBatchesSpecified -and $MaxBatches -gt 0) {
             $arguments += @('--max-batches', [string]$MaxBatches)
         }
-        & $codexNodePath @arguments
+        # Keep progress out of this function's Boolean return pipeline. Otherwise
+        # captured output both hides live progress and turns a paused $false into
+        # a truthy array, incorrectly sending an incomplete job into validation.
+        & $codexNodePath @arguments | ForEach-Object { Write-Host $_ }
         $exitCode = $LASTEXITCODE
         if ($exitCode -eq 2) {
-            Write-Output "TRANSLATION_PAUSED|job=$JobPath"
+            Write-Host "TRANSLATION_PAUSED|job=$JobPath"
             return $false
         }
         if ($exitCode -ne 0) { throw "Codex subscription translator failed with exit code $exitCode." }
@@ -512,6 +517,8 @@ function Initialize-ProductionWorkspace {
         ProductsRoot = Get-ConfiguredProductsRoot
     }
     if ($InteriorsPath) { $arguments.InteriorsPath = $InteriorsPath }
+    if ($SourcePackagePath) { $arguments.SourcePackagePath = $SourcePackagePath }
+    if ($DeferRelink) { $arguments.DeferRelink = $true }
     & $workspacePreparerPath @arguments
 }
 
@@ -587,6 +594,7 @@ function Invoke-ProductionFinalize {
         completedAt = [DateTime]::UtcNow.ToString('o')
         settingsPath = $resolvedSettings
         auditReport = $auditReportPath
+        auditSha256 = (Get-FileHash -LiteralPath $auditReportPath -Algorithm SHA256).Hash
         overflowStories = 0
         languageMismatchStyles = 0
         missingLinks = 0
@@ -655,6 +663,31 @@ function Invoke-ProductionExport {
     Write-Output "PRODUCTION_WORKSPACE_EXPORTED|workspace=$($job.Config.productionWorkspace.root)|document=$($job.Config.productionWorkspace.documentPath)|job=$($job.JobPath)|relinked=true"
 }
 
+function Assert-ProductionCompletionEvidence {
+    param(
+        [Parameter(Mandatory)] $Manifest,
+        [Parameter(Mandatory)] [string]$DocumentPath,
+        [Parameter(Mandatory)] [string]$LayoutAuditPath,
+        [Parameter(Mandatory)] [string]$WorkbookPath
+    )
+    if ([string]$Manifest.qa.status -ne 'passed') { throw 'Completion requires passed translation QA.' }
+    $expected = @(
+        @{ Path = $DocumentPath; Hash = [string]$Manifest.layoutFinalization.documentSha256; Label = 'finalized document' }
+        @{ Path = $LayoutAuditPath; Hash = [string]$Manifest.layoutFinalization.auditSha256; Label = 'final layout audit' }
+        @{ Path = $WorkbookPath; Hash = [string]$Manifest.import.workbookSha256; Label = 'imported workbook' }
+        @{ Path = $WorkbookPath; Hash = [string]$Manifest.qa.hashes.outputWorkbookSha256; Label = 'QA workbook' }
+    )
+    foreach ($item in $expected) {
+        if ($item.Hash -notmatch '^[A-Fa-f0-9]{64}$' -or -not (Test-Path -LiteralPath $item.Path -PathType Leaf)) {
+            throw "Missing completion evidence for $($item.Label). Import/finalize the current files before completing."
+        }
+        $actualHash = (Get-FileHash -LiteralPath $item.Path -Algorithm SHA256).Hash
+        if (-not $item.Hash.Equals($actualHash, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "The $($item.Label) changed after validation. Completion is blocked until the current files are imported/finalized."
+        }
+    }
+}
+
 function Complete-ProductionJob {
     $job = Get-ActiveJob
     if (-not $job.Config.productionWorkspace) { throw 'Use -Action Archive for a standard job.' }
@@ -667,6 +700,7 @@ function Complete-ProductionJob {
     $productionWorkspace = Get-ValidatedProductionWorkspace -Config $job.Config
     $documentPath = $productionWorkspace.DocumentPath
     $layoutAuditPath = Join-Path $job.JobPath 'reports\layout_audit_final.json'
+    Assert-ProductionCompletionEvidence -Manifest $manifest -DocumentPath $documentPath -LayoutAuditPath $layoutAuditPath -WorkbookPath (Join-Path $job.JobPath 'output\content_import.xlsx')
     $layoutAudit = Read-JsonFile -Path $layoutAuditPath -Label 'final layout audit'
     if ([int]$layoutAudit.overflow.storyCount -ne 0) { throw 'The final layout audit contains overset stories.' }
     if ([int]$layoutAudit.linkStatus.missing -ne 0 -or [int]$layoutAudit.linkStatus.outdated -ne 0) {

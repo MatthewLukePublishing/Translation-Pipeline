@@ -58,10 +58,12 @@ if (-not ($resolvedDiagrams.TrimEnd('\') + '\').StartsWith($workspaceRoot, [Stri
 $mutex = [Threading.Mutex]::new($false, 'Global\PublishingStep2InDesignTranslation')
 $hasMutex = $false
 $app = $null
+$operationCompleted = $false
 $startedInDesign = @((Get-Process -Name InDesign -ErrorAction SilentlyContinue)).Count -eq 0
 try {
     $hasMutex = $mutex.WaitOne(0)
     if (-not $hasMutex) { throw 'Another Step 2 InDesign translation operation is already running.' }
+    if (Get-Process -Name InDesign -ErrorAction SilentlyContinue) { Wait-InDesignUiIdle }
     $app = Get-InDesignApplication
     $openDocuments = [string]$app.DoScript(@'
 (function(){
@@ -79,7 +81,8 @@ try {
     }
 
     function Invoke-BoundedInDesignAction {
-        param([Parameter(Mandatory)] [string]$EffectiveAction)
+        param([Parameter(Mandatory)] [string]$EffectiveAction, [int]$CheckpointAttempts = 0)
+        if ($EffectiveAction -ne 'open') { Wait-InDesignUiIdle }
         $scriptText = Get-Content -LiteralPath $templatePath -Raw
         $replacements = [ordered]@{
             '__ACTION_JS__' = ConvertTo-JavaScriptStringLiteral $EffectiveAction.ToLowerInvariant()
@@ -94,9 +97,16 @@ try {
         if ($scriptText -match '__[A-Z][A-Z0-9_]+__') { throw "Unresolved JSX token: $($matches[0])" }
         $actionResult = [string]$app.DoScript($scriptText, $javaScriptLanguage)
         if ($actionResult -like 'ERROR*') { throw $actionResult }
+        if ($actionResult -like 'CHECKPOINT_REQUIRED*') {
+            if ($Action -eq 'Audit' -or $CheckpointAttempts -ge 3) { throw 'Document did not reach a stable checkpoint; no pending changes were discarded.' }
+            Write-Host $actionResult
+            Write-Host (Invoke-BoundedInDesignAction -EffectiveAction 'checkpoint')
+            return Invoke-BoundedInDesignAction -EffectiveAction $EffectiveAction -CheckpointAttempts ($CheckpointAttempts + 1)
+        }
         return $actionResult
     }
 
+    Write-Output (Invoke-BoundedInDesignAction -EffectiveAction 'open')
     if ($Action -eq 'Audit') {
         Write-Output (Invoke-BoundedInDesignAction -EffectiveAction 'audit')
     } elseif ($Action -in @('Prepare', 'Relink')) {
@@ -134,8 +144,11 @@ try {
         }
         if (-not $refreshComplete) { throw 'Link refresh did not complete within 200 bounded calls.' }
     }
+    if ($Action -ne 'Audit') { Write-Output (Invoke-BoundedInDesignAction -EffectiveAction 'checkpoint') }
+    Write-Output (Invoke-BoundedInDesignAction -EffectiveAction 'close')
+    $operationCompleted = $true
 } finally {
-    if ($null -ne $app -and $startedInDesign) {
+    if ($null -ne $app -and $startedInDesign -and $operationCompleted) {
         try {
             $openCount = [int]$app.DoScript('app.documents.length', $javaScriptLanguage)
             if ($openCount -eq 0) { [void]$app.DoScript('app.quit(SaveOptions.NO)', $javaScriptLanguage) }

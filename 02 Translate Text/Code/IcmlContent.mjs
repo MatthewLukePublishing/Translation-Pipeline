@@ -17,7 +17,7 @@ export function assertIcmlReplacementStructure(source, replacement, location = "
   const invariants = [
     ["processing instructions", /<\?[\s\S]*?\?>/g],
     ["markup tags", /<\/?[A-Za-z][^>]*>/g],
-    ["line breaks", /\r\n|\r|\n/g],
+    ["line breaks", /\r\n|[\r\n\u2028\u2029]/g],
   ];
   for (const [label, pattern] of invariants) {
     if (JSON.stringify(inventory(source, pattern)) !== JSON.stringify(inventory(replacement, pattern))) {

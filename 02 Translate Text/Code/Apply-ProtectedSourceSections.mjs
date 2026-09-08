@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
-import XLSX from "xlsx";
+import XLSX, { restoreLiteralCells } from "../../Code/SheetJsNode.mjs";
 import fileUtilities from "../../Code/FileUtilities.cjs";
 import transactionalFiles from "../../Code/TransactionalFileReplacement.cjs";
 import { normalizeContentId } from "./ContentIds.mjs";
@@ -166,13 +166,7 @@ if (cli.workbook) {
     await outputBlob.save(temporary);
     const excelSafeWorkbook = XLSX.readFile(temporary, { cellDates: false, cellStyles: true });
     const excelSafeWorksheet = excelSafeWorkbook.Sheets[excelSafeWorkbook.SheetNames[0]];
-    for (let row = 0; row < outputValues.length; row += 1) {
-      for (let column = 0; column < 4; column += 1) {
-        if (outputValues[row][column] === "") {
-          delete excelSafeWorksheet[XLSX.utils.encode_cell({ r: row, c: column })];
-        }
-      }
-    }
+    restoreLiteralCells(excelSafeWorksheet, outputValues);
     XLSX.writeFile(excelSafeWorkbook, temporary, { bookType: "xlsx", compression: true, bookSST: true, cellStyles: true });
     assertLiteralXlsxWorkbook(
       XLSX.readFile(temporary, { cellFormula: true, cellText: false, cellDates: false }),

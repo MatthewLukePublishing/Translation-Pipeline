@@ -242,13 +242,19 @@ async function queryBatch(batch, model) {
       console.warn(`CAPTION_RAW_RESPONSE_QUARANTINED|batch=${batch.id}|reason=${error.message}`);
     }
   }
-  const currentModel = await resolveLatestSubscriptionModel({ nodePath: CODEX_NODE_EXE, cliPath: CODEX_CLI_JS });
+  const currentModel = await resolveLatestSubscriptionModel({
+    nodePath: CODEX_NODE_EXE, cliPath: CODEX_CLI_JS,
+    expectedModel: model, reasoningEffort: REASONING_EFFORT,
+  });
   if (currentModel.model !== model || currentModel.policy !== MODEL_POLICY) {
     throw new Error(`The current latest model changed from '${model}' to '${currentModel.model}'. Start a new caption run.`);
   }
   const prompt = buildPrompt(batch);
   fs.writeFileSync(promptPath, prompt, "utf8");
   writeJson(schemaPath, responseSchema(batch));
+  writeJson(path.join(requestDir, `${batch.id}.request.json`), {
+    batchId: batch.id, modelResolution: currentModel, reasoningEffort: REASONING_EFFORT,
+  });
   fs.rmSync(rawPath, { force: true });
   const run = runCodex([
     "exec", "-",
@@ -312,7 +318,7 @@ if (fs.existsSync(STATE_PATH)) {
   const prior = readJson(STATE_PATH, "caption subscription state");
   if (prior.planSha256 !== plan.planSha256) throw new Error("Caption workbook or latest-model plan changed after this run began. Archive the old subscription_state and start again.");
 } else {
-  writeJson(STATE_PATH, { ...plan, status: "translating", createdAt: new Date().toISOString(), completedBatches: [] });
+  writeJson(STATE_PATH, { ...plan, modelResolution, status: "translating", createdAt: new Date().toISOString(), completedBatches: [] });
 }
 
 const translations = new Map();

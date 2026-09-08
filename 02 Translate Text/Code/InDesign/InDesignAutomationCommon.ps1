@@ -1,6 +1,7 @@
 $translationFileUtilitiesPath = Join-Path (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))) 'Code\TranslationFileUtilities.ps1'
 if (-not (Test-Path -LiteralPath $translationFileUtilitiesPath -PathType Leaf)) { throw "Missing translation file utility: $translationFileUtilitiesPath" }
 . $translationFileUtilitiesPath
+. (Join-Path $PSScriptRoot 'InDesignUiIdle.ps1')
 
 function ConvertFrom-EncodedValue {
     param([AllowEmptyString()] [string]$Value)

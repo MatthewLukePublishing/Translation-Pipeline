@@ -86,15 +86,19 @@ Read the stage README files before preparing data or launching an Adobe applicat
 
 Translation is restricted to the ChatGPT-authenticated Codex harness. The pipeline:
 
-- reads the installed Codex harness model catalog and selects its newest visible frontier model at runtime;
+- queries OpenAI's live `latestModelInfo.model` metadata to identify the official frontier, then queries the authenticated Codex service to verify access to that exact model and `xhigh` support;
 - records the exact resolved model in the job record;
-- resolves again immediately before every primary model query and fails if the frontier changes;
+- repeats both live requests before every new model query, including retries and rechecks, and fails if the frontier changes;
 - requires independent `xhigh` reasoning for primary translation/review calls and rechecks;
 - requires `codex login status` to report ChatGPT sign-in;
 - removes API-key and alternate-endpoint variables from every model subprocess; and
 - has no active paid API provider, API-key fallback, alternate endpoint, or older-model fallback.
 
-If model resolution, catalog validation, authentication, or `xhigh` support fails, the job stops before sending a query.
+No model is installed locally. The Codex CLI is the client for hosted model queries and ChatGPT sign-in. Model discovery never uses a bundled catalog, a local model cache, catalog priority, or a saved job's model as its authority. Every discovery request disables caching and rejects redirects.
+
+The official model authority is [OpenAI's live model guidance](https://developers.openai.com/api/docs/guides/latest-model). Availability comes from the same ChatGPT subscription discovery service used by the official Codex client. The resolver reads the existing Codex-managed ChatGPT session from its vendor-owned `auth.json` in memory; it never copies or logs credentials. Keyring-only sessions are not supported by this resolver and cause it to stop.
+
+If either live request, metadata validation, authentication, or `xhigh` support fails, the job stops before sending a query. A current frontier that is missing from the account's live catalog is a blocking failure, even if an older model is available. Job and query records include the exact model, resolution time, source URLs, client version, and metadata hashes; saved resolutions are evidence only and are never reused for model selection.
 
 ## Outputs and recovery
 
@@ -108,6 +112,7 @@ Workspace preparation, ICML import, caption completion, and job archival use tra
 - **Products root rejected:** pass an absolute `-ProductsRoot`, set `TRANSLATION_PRODUCTS_ROOT`, or use the documented sibling `Products` layout.
 - **Codex login rejected:** run `codex login`, choose Sign in with ChatGPT, and confirm with `codex login status`. API-key authentication is intentionally refused.
 - **Frontier model changed:** restart the job so every query is based on one newly recorded model resolution. The pipeline will not silently continue across a frontier change.
+- **Frontier unavailable or live discovery failed:** check connectivity and the Codex ChatGPT sign-in. The current frontier must appear in the service's response for this account and client. Re-running discovery must succeed before translation can continue; the program will not substitute an older model or a cached list.
 - **Workbook fails QA:** keep columns A and C unchanged, remove formulas and Excel error cells, and rerun `-Action Validate`. A workbook changed after import must be reimported.
 - **Import is stale:** restore the exact QA-passed workbook and ICML snapshot, or validate and import the authorized new revision.
 - **Adobe step will not start:** save and close unrelated Adobe documents, confirm the configured document and asset paths, then retry the same action. Never run concurrent InDesign operations.
@@ -136,8 +141,9 @@ published.
 
 - Primary entry point: `Run-Translation-Job.ps1`
 - Cross-stage code: `Code` (shared infrastructure only; stage-specific code remains with its stage).
-- Production jobs: `<Book>\Interiors\<Edition>\Translation Job`.
-- Ad hoc jobs: `02 Translate Text\Jobs\<book>\<language>\<job-id>`.
+- Production outputs: `<Book>\Interiors\<Edition>` (isolated from the English source).
+- Current production and ad hoc job records: `02 Translate Text\Jobs\<book>\<language>\<job-id>`.
+- Legacy production job records: `<Book>\Interiors\<Edition>\Translation Job` (still supported).
 - Active-job pointer: `02 Translate Text\Active Job.json` (generated; one at a time).
 - Archive boundary: `_Archive`
 

@@ -20,6 +20,14 @@ export function compileGlossaryEntries(rawEntries) {
     const entry = { ...rawEntry, source, target };
     const existing = exact.get(source);
     if (existing && existing.target !== target) {
+      if (existing.kind === "definition" && entry.kind === "definition") {
+        existing.contextual = true;
+        existing.alternatives ||= [{ target: existing.target, sourceTerm: existing.sourceTerm || "" }];
+        if (!existing.alternatives.some(choice => choice.target === target)) {
+          existing.alternatives.push({ target, sourceTerm: entry.sourceTerm || "" });
+        }
+        continue;
+      }
       throw new Error(`Conflicting glossary targets for exact source '${source}'.`);
     }
     if (!existing) exact.set(source, entry);
@@ -35,7 +43,7 @@ export function compileGlossaryEntries(rawEntries) {
   return sorted([...exact.values()].map((entry) => ({
     ...entry,
     foldedSource: folded(entry.source),
-    allowCaseInsensitiveFallback: byFoldedSource.get(folded(entry.source)).length === 1,
+    allowCaseInsensitiveFallback: !entry.contextual && byFoldedSource.get(folded(entry.source)).length === 1,
   })));
 }
 
@@ -43,6 +51,7 @@ function claimMatches(text, entries, caseSensitive, claimedSources) {
   let unclaimed = text;
   const matches = [];
   for (const entry of entries) {
+    if (entry.contextual) continue;
     if (!caseSensitive && !entry.allowCaseInsensitiveFallback) continue;
     if (claimedSources.has(entry.source)) continue;
     const pattern = glossaryPattern(entry.source, { caseSensitive });
@@ -65,6 +74,7 @@ export function resolveGlossaryEntriesForText(value, compiledEntries) {
 }
 
 export function glossaryEntryApplies(value, entry) {
+  if (entry.contextual) return false;
   const text = String(value ?? "");
   const exact = glossaryPattern(entry.source, { caseSensitive: true });
   if (exact.test(text)) return true;
@@ -86,4 +96,3 @@ export function glossaryAmbiguities(compiledEntries) {
       targets: entries.map((entry) => entry.target),
     }));
 }
-

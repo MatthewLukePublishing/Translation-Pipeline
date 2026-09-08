@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import XLSX from "xlsx";
+import XLSX, { restoreLiteralCells } from "../../Code/SheetJsNode.mjs";
 import atomicFiles from "../../Code/AtomicFiles.cjs";
 import fileUtilities from "../../Code/FileUtilities.cjs";
 import transactionalFiles from "../../Code/TransactionalFileReplacement.cjs";
@@ -17,6 +17,8 @@ import {
 } from "./BookTranslationRules.mjs";
 import { normalizeContentId } from "./ContentIds.mjs";
 import { buildContentGroups } from "./ContentGroups.mjs";
+import { lockLineBreaks, restoreLockedLineBreaks, restoreLineBreakKinds } from "./LineBreaks.mjs";
+import { validateWithTargetedRecheck } from "./BatchRecheck.mjs";
 import { glossaryPattern } from "./GlossaryPatterns.mjs";
 import { applyLanguagePostprocessors } from "./LanguagePostprocessors.mjs";
 import {
@@ -119,7 +121,7 @@ function assertSegmentStructure(source, translated, location) {
   const invariants = [
     ["processing instructions", /<\?[\s\S]*?\?>/g],
     ["markup tags", /<\/?[A-Za-z][^>]*>/g],
-    ["line breaks", /\r\n|\r|\n/g],
+    ["line breaks", /\r\n|[\r\n\u2028\u2029]/g],
   ];
   for (const [label, pattern] of invariants) {
     const before = matchingInventory(source, pattern);
@@ -275,6 +277,7 @@ function normalizeGlossaryPayload(payload, termKey, definitionKey) {
         definition,
         targetWasDefinition: true,
         kind: "definition",
+        sourceTerm: source,
       });
     }
   }
@@ -399,6 +402,7 @@ function selectGroupsForBaselineMode(groups, glossary, previousGlossary, baselin
 function prepareGroup(group, glossaryEntries, bookInstructions) {
   const locks = [];
   const bookSourceLocks = [];
+  const lineBreakLocks = [];
   let lockCounter = 0;
   let bookLockCounter = 0;
   const preparedSegments = group.sourceSegments.map((sourceSegment, segmentIndex) => {
@@ -422,9 +426,12 @@ function prepareGroup(group, glossaryEntries, bookInstructions) {
       });
     }
     const anchor = `⟦S_${group.groupId}_${String(segmentIndex + 1).padStart(3, "0")}⟧`;
+    const breaks = lockLineBreaks(prepared, group.groupId, segmentIndex);
+    prepared = breaks.text;
+    lineBreakLocks.push(...breaks.locks);
     return { anchor, text: `${anchor}${prepared}` };
   });
-  return { ...group, locks, bookSourceLocks, preparedSegments };
+  return { ...group, locks, bookSourceLocks, lineBreakLocks, preparedSegments };
 }
 
 function makeBatches(preparedGroups, maxChars, maxGroups, maxSegments) {
@@ -464,12 +471,15 @@ function buildPrompt(batch, config) {
     batch_id: batch.batchId,
     target_language: config.targetLanguage,
     glossary_profile: config.glossaryProfile,
+    contextual_glossary_definitions: config.contextualGlossaryDefinitions || [],
+    ...(config.recheckContext ? { recheck_context: config.recheckContext } : {}),
     groups: batch.groups.map((group) => ({
       group_id: group.groupId,
       segments: group.preparedSegments.map((item) => item.text),
       ...(group.baselineSegments ? { baseline_segments: group.baselineSegments } : {}),
       glossary_locks: group.locks,
       book_source_locks: group.bookSourceLocks,
+      line_break_locks: group.lineBreakLocks.map(({ token, source, segmentIndex }) => ({ token, codePoints: [...source].map(character => character.codePointAt(0)), segmentIndex })),
     })),
   };
   return [
@@ -481,8 +491,10 @@ function buildPrompt(batch, config) {
     "Each ⟦G_...⟧ glossary token represents the exact target string listed in glossary_locks. Keep the token in the grammatically correct position; the caller replaces it deterministically after translation.",
     "Every glossary token in the source payload occurs exactly once. Preserve each token exactly once: never duplicate it, omit it, substitute one glossary token for another, or invent a glossary token.",
     "Each ⟦B_...⟧ book-source token represents the exact original-English string listed in book_source_locks. Preserve the token exactly once; the caller restores that official name verbatim.",
+    "Each ⟦L_...⟧ token marks an existing line break. Preserve every token exactly once in its original segment and order. Do not emit Unicode escapes or control characters instead; the caller restores the original separator from the token.",
     "Translate all ordinary English, including English inside quotation marks and capitalized role labels. Do not leave English words merely because they are capitalized.",
     `Use clear, direct, idiomatic language suitable for a ${config.targetLanguage}-language defense reader. Normalize capitalization to target-language conventions.`,
+    "Where contextual_glossary_definitions lists multiple meanings for the same English expression, resolve the sense from the source's service and surrounding context. These are alternatives, not interchangeable mandatory substitutions. Do not insert explanatory glossary annotations unless the English source includes that information.",
     ...(config.bookInstructions.applied ? [
       "The following book-specific rules are mandatory. They override conflicting general instructions, glossary wording, and edition guidance:",
       ...config.bookInstructions.promptInstructions.map((instruction) => `- ${instruction}`),
@@ -495,12 +507,16 @@ function buildPrompt(batch, config) {
     "Do not merge, split, summarize, omit, or add information.",
     "Preserve numbers, dates, email addresses, codes, punctuation when appropriate, internal line breaks, and every processing instruction such as <?ACE 4?> exactly.",
     "Preserve leading and trailing whitespace after the segment anchor.",
+    ...(config.recheckContext ? [
+      "This is an independent recheck of only the groups that failed validation. Use recheck_context as the previous draft and correct the reported failures with minimal wording changes; retain its valid translation, facts, glossary tokens, and segment anchors.",
+      "Whitespace at style-segment boundaries is exact. If a French contraction/elision would require deleting a source boundary space, rephrase naturally to retain that space; do not insert an ungrammatical space after an apostrophe. Check every segment of each repaired group before returning it.",
+    ] : []),
     "Do not use tools, browse, or read files. Translate only the JSON payload below.",
     JSON.stringify(payload),
   ].join("\n\n");
 }
 
-function validateAndRestoreResponse(response, batch, bookInstructions) {
+function validateAndRestoreResponse(response, batch, bookInstructions, requireBreakTokens = false) {
   if (!response || typeof response !== "object" || response.batch_id !== batch.batchId) {
     throw new Error(`Response batch_id mismatch for ${batch.batchId}.`);
   }
@@ -545,11 +561,12 @@ function validateAndRestoreResponse(response, batch, bookInstructions) {
           throw new Error(`Book source lock ${lock.token} occurred ${occurrences} time(s) in ${sourceGroup.groupId}; expected once.`);
         }
         translated = translated.split(lock.token).join(lock.source);
-        restoredBookSourceLocks += 1;
       }
       const leftoverBookLock = translated.match(/⟦B_[^⟧]+⟧/);
       if (leftoverBookLock) throw new Error(`Unresolved book source lock ${leftoverBookLock[0]} in ${sourceGroup.groupId}.`);
       const location = `${sourceGroup.groupId}, segment ${index + 1}`;
+      translated = restoreLockedLineBreaks(translated, sourceGroup.lineBreakLocks.filter(lock => lock.segmentIndex === index), requireBreakTokens);
+      translated = restoreLineBreakKinds(sourceGroup.sourceSegments[index], translated);
       translated = sanitizeXmlText(translated, location);
       if (sourceGroup.sourceSegments[index].trim() && !translated.trim()) {
         throw new Error(`Blank translation for ${sourceGroup.groupId}, segment ${index + 1}.`);
@@ -608,35 +625,62 @@ function assertChatGptLogin(nodePath, cliPath) {
 const REQUIRED_SUBSCRIPTION_REASONING_EFFORT = "xhigh";
 const REQUIRED_MODEL_POLICY = "official_latest_frontier";
 
-async function runTranslationBatch({ batch, config, nodePath, cliPath, schemaPath, stateRoot, bookInstructions }) {
+async function runTranslationBatch({ batch, config, nodePath, cliPath, schemaPath, stateRoot, bookInstructions, recheckAttempt = 0 }) {
   const promptPath = path.join(stateRoot, "requests", `${batch.batchId}.json`);
   const responsePath = path.join(stateRoot, "responses", `${batch.batchId}.json`);
   const rawResponsePath = path.join(stateRoot, "responses", `${batch.batchId}.raw.json`);
   fs.mkdirSync(path.dirname(promptPath), { recursive: true });
   fs.mkdirSync(path.dirname(responsePath), { recursive: true });
 
+  const expectsBreakTokens = () => fs.existsSync(promptPath) && readJson(promptPath, "batch query record").lineBreakTokens === true;
+
+  async function finishResponse(parsed) {
+    const result = await validateWithTargetedRecheck({
+      response: parsed, batch, attempt: recheckAttempt,
+      validate: (value, sourceBatch) => validateAndRestoreResponse(value, sourceBatch, bookInstructions, expectsBreakTokens()),
+      query: async (repairBatch, recheckContext, attempt) => {
+        console.log(`CODEX_TARGETED_RECHECK|batch=${batch.batchId}|groups=${repairBatch.groups.length}|attempt=${attempt}`);
+        await runTranslationBatch({ batch: repairBatch, config: { ...config, recheckContext }, nodePath, cliPath, schemaPath, stateRoot, bookInstructions, recheckAttempt: attempt });
+        return readJson(path.join(stateRoot, "responses", `${repairBatch.batchId}.json`), "targeted recheck response");
+      },
+    });
+    writeJson(responsePath, result.response);
+    if (result.rechecked) {
+      // Keep the original draft for provenance; never overwrite it during a resume.
+      const originalPath = path.join(stateRoot, "responses", `${batch.batchId}.original.json`);
+      if (!fs.existsSync(originalPath)) writeJson(originalPath, parsed);
+    }
+    fs.rmSync(rawResponsePath, { force: true });
+    return result.restored;
+  }
+
   if (fs.existsSync(responsePath)) {
-    return validateAndRestoreResponse(readJson(responsePath, `${batch.batchId} response`), batch, bookInstructions);
+    const saved = readJson(responsePath, `${batch.batchId} response`);
+    try { return validateAndRestoreResponse(saved, batch, bookInstructions, expectsBreakTokens()); }
+    catch { return finishResponse(saved); }
   }
 
   if (fs.existsSync(rawResponsePath)) {
+    let recovered;
     try {
-      const recovered = readJson(rawResponsePath, `${batch.batchId} interrupted raw response`);
-      const restored = validateAndRestoreResponse(recovered, batch, bookInstructions);
-      writeJson(responsePath, recovered);
-      fs.rmSync(rawResponsePath, { force: true });
-      console.log(`CODEX_BATCH_RECOVERED|batch=${batch.batchId}|groups=${restored.length}`);
-      return restored;
+      recovered = readJson(rawResponsePath, `${batch.batchId} interrupted raw response`);
     } catch (error) {
       const quarantined = `${rawResponsePath}.invalid-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
       fs.renameSync(rawResponsePath, quarantined);
       console.warn(`CODEX_BATCH_RAW_QUARANTINED|batch=${batch.batchId}|file=${quarantined}|reason=${error.message}`);
     }
+    if (recovered) {
+      const restored = await finishResponse(recovered);
+      console.log(`CODEX_BATCH_RECOVERED|batch=${batch.batchId}|groups=${restored.length}`);
+      return restored;
+    }
   }
 
   const prompt = buildPrompt(batch, { ...config, bookInstructions });
   assertChatGptLogin(nodePath, cliPath);
-  const queryModelResolution = await resolveLatestSubscriptionModel({ nodePath, cliPath });
+  const queryModelResolution = await resolveLatestSubscriptionModel({
+    nodePath, cliPath, expectedModel: config.model, reasoningEffort: config.reasoningEffort,
+  });
   if (queryModelResolution.model !== config.model) {
     throw new Error(
       `Translation query ${batch.batchId} was prepared for '${config.model}', but the current official frontier model is '${queryModelResolution.model}'. Create a new job; no stale-model fallback is permitted.`
@@ -644,10 +688,12 @@ async function runTranslationBatch({ batch, config, nodePath, cliPath, schemaPat
   }
   writeJson(promptPath, {
     batchId: batch.batchId,
+    lineBreakTokens: true,
     model: queryModelResolution.model,
     modelPolicy: queryModelResolution.policy,
     modelResolvedAt: queryModelResolution.resolvedAt,
     modelResolutionSourceUrl: queryModelResolution.sourceUrl,
+    modelResolution: queryModelResolution,
     reasoningEffort: config.reasoningEffort,
     sourceChars: batch.sourceChars,
     segmentCount: batch.segmentCount,
@@ -678,9 +724,7 @@ async function runTranslationBatch({ batch, config, nodePath, cliPath, schemaPat
     throw new Error(`Codex subscription query failed for ${batch.batchId} with exit code ${run.status}.\n${diagnostics}`);
   }
   const parsed = readJson(rawResponsePath, `${batch.batchId} raw Codex response`);
-  const restored = validateAndRestoreResponse(parsed, batch, bookInstructions);
-  writeJson(responsePath, parsed);
-  fs.rmSync(rawResponsePath, { force: true });
+  const restored = await finishResponse(parsed);
   console.log(`CODEX_BATCH_COMPLETE|batch=${batch.batchId}|groups=${restored.length}`);
   return restored;
 }
@@ -729,6 +773,8 @@ if (!codexCliPath || !fs.existsSync(codexCliPath)) throw new Error("The official
 const latestModelResolution = await resolveLatestSubscriptionModel({
   nodePath: codexNodePath,
   cliPath: codexCliPath,
+  expectedModel: config.model,
+  reasoningEffort: config.reasoningEffort,
 });
 if (String(config.model || "") !== latestModelResolution.model) {
   throw new Error(
@@ -763,6 +809,8 @@ const groups = buildGroups(sourceValues);
 const protectedSource = readProtectedSourceManifest(jobDir, config);
 const protectedPartition = partitionProtectedGroups(groups, sourceValues, protectedSource.contentIds);
 const glossary = readGlossary(jobDir, config, undefined, undefined, bookInstructions.glossarySourceTermExclusions);
+config.contextualGlossaryDefinitions = glossary.filter(entry => entry.contextual)
+  .map(entry => ({ source: entry.source, alternatives: entry.alternatives }));
 const glossaryTableMap = readGlossaryTableMap(
   jobDir,
   config,
@@ -831,7 +879,7 @@ const planCore = {
   model: String(config.model || ""),
   modelPolicy: REQUIRED_MODEL_POLICY,
   modelResolutionSourceUrl: latestModelResolution.sourceUrl,
-  modelCatalogPriority: latestModelResolution.catalogPriority,
+  modelDiscovery: latestModelResolution.discovery,
   reasoningEffort: String(config.reasoningEffort || "xhigh"),
   targetLanguage: String(config.targetLanguage || ""),
   glossaryProfile: String(config.glossaryProfile || ""),
@@ -852,6 +900,7 @@ const planCore = {
   baselineCandidateEntryCount,
   baselineBookInstructionCandidateGroupCount,
   translationGuidance: String(config.translationGuidance || ""),
+  contextualGlossaryDefinitions: config.contextualGlossaryDefinitions,
   bookTranslationInstructions: {
     applied: bookInstructions.applied,
     moduleId: bookInstructions.moduleId,
@@ -886,7 +935,7 @@ if (cli.check) {
 
 fs.mkdirSync(stateRoot, { recursive: true });
 if (!hasPriorState) {
-  writeJson(statePath, { ...planIdentity, createdAt: new Date().toISOString(), completedBatches: [] });
+  writeJson(statePath, { ...planIdentity, modelResolution: latestModelResolution, createdAt: new Date().toISOString(), completedBatches: [] });
 }
 writeJson(schemaPath, {
   $schema: "https://json-schema.org/draft/2020-12/schema",
@@ -947,6 +996,7 @@ try {
       bookInstructions,
     });
     if (!existedBefore) queried += 1;
+    restoredBookSourceLocks += batch.groups.reduce((sum, group) => sum + group.bookSourceLocks.length, 0);
     for (const group of restored) translatedByGroup.set(group.groupId, group.segments);
     const state = readJson(statePath, "Codex subscription state");
     state.completedBatches = batches
@@ -1006,13 +1056,7 @@ try {
     // index during a bookSST rewrite. Continuation rows intentionally leave some
     // Step 2 cells blank, so remove those cells before canonicalizing the workbook.
     const excelSafeWorksheet = excelSafeWorkbook.Sheets[excelSafeWorkbook.SheetNames[0]];
-    for (let row = 0; row < outputValues.length; row += 1) {
-      for (let column = 0; column < 4; column += 1) {
-        if (outputValues[row][column] === "") {
-          delete excelSafeWorksheet[XLSX.utils.encode_cell({ r: row, c: column })];
-        }
-      }
-    }
+    restoreLiteralCells(excelSafeWorksheet, outputValues);
     XLSX.writeFile(excelSafeWorkbook, temporaryOutput, {
       bookType: "xlsx",
       compression: true,
@@ -1118,6 +1162,11 @@ try {
   };
   delete finalManifest.subscriptionTranslation.failedAt;
   delete finalManifest.subscriptionTranslation.error;
+  const finalModelResolution = await resolveLatestSubscriptionModel({
+    nodePath: codexNodePath, cliPath: codexCliPath, expectedModel: planIdentity.model, reasoningEffort: "xhigh",
+  });
+  report.finalModelResolution = finalModelResolution;
+  finalManifest.subscriptionTranslation.finalModelResolution = finalModelResolution;
   const finalization = commitFileSetWithJournalSync(finalizationJournal, [
     { filePath: outputPath, data: outputBytes },
     { filePath: previewPath, data: previewBytes },

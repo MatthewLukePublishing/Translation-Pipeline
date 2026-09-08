@@ -5,7 +5,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import XLSX from "xlsx";
+import XLSX from "../../Code/SheetJsNode.mjs";
 import transactionalFiles from "../../Code/TransactionalFileReplacement.cjs";
 import { fnv1a32Utf16 } from "./ContentFingerprint.mjs";
 import { normalizeContentId } from "./ContentIds.mjs";

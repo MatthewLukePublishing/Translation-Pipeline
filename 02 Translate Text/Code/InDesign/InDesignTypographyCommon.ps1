@@ -1,4 +1,5 @@
 . (Join-Path $PSScriptRoot 'InDesignAutomationCommon.ps1')
+. (Join-Path $PSScriptRoot 'InDesignTranslationLanguage.ps1')
 
 function Invoke-InDesignTypographyStep {
     param(
@@ -20,7 +21,7 @@ function Invoke-InDesignTypographyStep {
         '__SETTINGS_JS__' = ConvertTo-Json -InputObject @($Settings) -Depth 10 -Compress
         '__LANGUAGE_JS__' = '""'
     }
-    if ($TargetLanguage) { $replacements['__LANGUAGE_JS__'] = ConvertTo-JavaScriptStringLiteral $TargetLanguage }
+    if ($TargetLanguage) { $replacements['__LANGUAGE_JS__'] = ConvertTo-JavaScriptStringLiteral (Resolve-InDesignTranslationLanguage -TargetLanguage $TargetLanguage) }
     foreach ($key in $replacements.Keys) { $scriptText = $scriptText.Replace($key, [string]$replacements[$key]) }
     if ($scriptText -match '__[A-Z][A-Z0-9_]+__') { throw "Unresolved typography JSX token: $($matches[0])" }
     $result = [string]$Application.DoScript($scriptText, 1246973031)

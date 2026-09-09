@@ -68,11 +68,25 @@ function typographyHarness() {
   app.open = () => { app.documents = [doc]; return doc; };
   const context = { app, UserInteractionLevels: { NEVER_INTERACT: "none" }, SaveOptions: { NO: "no" }, LinkStatus: { LINK_MISSING: "missing", LINK_OUT_OF_DATE: "outdated", LINK_EMBEDDED: "embedded" }, File: function(file) { this.fsName = file; this.exists = true; } };
   function run(action, options = {}) {
-    const values = { ACTION: action, DOCUMENT: documentPath, START: options.start ?? 0, COUNT: options.count ?? 25, SETTINGS: options.settings ?? [], LANGUAGE: "French" };
+    const values = { ACTION: action, DOCUMENT: documentPath, START: options.start ?? 0, COUNT: options.count ?? 25, SETTINGS: options.settings ?? [], LANGUAGE: options.language ?? "French" };
     return vm.runInNewContext("Array.prototype.indexOf = undefined;\n" + source.replace(/__([A-Z]+)_JS__/g, (_, key) => JSON.stringify(values[key])), context);
   }
   return { app, doc, styles, run, context, counts: () => ({ saves, closes, updates }) };
 }
+
+test("modern German dictionary must be installed; language-only settings preserve typography", () => {
+  const h = typographyHarness(); h.run("open");
+  h.app.languagesWithVendors = [{ name: "German: Old Rules" }, { name: "German: Swiss 2006 Reform" }];
+  assert.match(h.run("language", { language: "German: 2006 Reform" }), /^ERROR.*not installed/);
+  assert.ok(h.styles.every(s => s.appliedLanguage.name === "English"));
+  h.app.languagesWithVendors.push({ name: "German: 2006 Reform" });
+  assert.match(h.run("language", { language: "German: 2006 Reform", count: 2 }), /^LANGUAGE/);
+  assert.equal(h.styles[0].appliedLanguage.name, "German: 2006 Reform");
+  assert.equal(h.styles[2].appliedLanguage.name, "English");
+  h.run("apply", { count: 1, settings: [{ path: "Style 0" }] });
+  assert.ok(h.styles.every(s => s.pointSize === 12 && s.leading === 14));
+  assert.deepEqual(h.counts(), { saves: 0, closes: 0, updates: 0 });
+});
 
 test("editorial inventory is bounded, read-only and reads only applicable block properties", () => {
   const h = typographyHarness();

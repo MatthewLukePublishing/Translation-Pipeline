@@ -23,4 +23,11 @@ $rejected = $false
 try { Invoke-InDesignTypographyStep -Application $application -DocumentPath 'C:\Synthetic\book.indd' -Action close | Out-Null }
 catch { $rejected = $_.Exception.Message -eq 'ERROR|Synthetic failure' }
 if (-not $rejected -or $application.calls -ne 3 -or $script:idleCalls -ne 3) { throw 'Every call must wait for UI idleness and an error must not launch cleanup calls.' }
-Write-Output 'INDESIGN_TYPOGRAPHY_TEST_OK|cases=3|adobeCalls=0'
+$application.result = 'UNCHANGED'
+$null = Invoke-InDesignTypographyStep -Application $application -DocumentPath 'C:\Synthetic\book.indd' -Action language -TargetLanguage German
+if ($application.lastScript -notmatch 'languageName = "German: 2006 Reform"') { throw 'German must select the modern native dictionary.' }
+foreach ($language in @('French', 'Spanish', 'German: Swiss 2006 Reform')) {
+    if ((Resolve-InDesignTranslationLanguage $language) -cne $language) { throw "Explicit language changed: $language" }
+}
+if ((Resolve-InDesignTranslationLanguage 'german') -cne 'German: 2006 Reform') { throw 'Generic language matching must be case-insensitive.' }
+Write-Output 'INDESIGN_TYPOGRAPHY_TEST_OK|cases=8|adobeCalls=0'

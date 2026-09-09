@@ -9,6 +9,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'InDesignTypographyCommon.ps1')
+$nativeLanguage = Resolve-InDesignTranslationLanguage -TargetLanguage $TargetLanguage
 . (Join-Path (Split-Path -Parent $PSScriptRoot) 'TranslationPathSafety.ps1')
 $programRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
 $productsRoot = Resolve-TranslationProductsRoot -ExplicitPath $ProductsRoot -ProgramRoot $programRoot
@@ -61,7 +62,7 @@ try {
     $changes = [Collections.Generic.List[object]]::new()
     $report = [ordered]@{
         schemaVersion = 1; status = 'audited'; documentPath = $resolvedDocument
-        targetLanguage = $TargetLanguage; settingsPath = $resolvedSettings; source = $settings.source
+        targetLanguage = $TargetLanguage; nativeLanguage = $nativeLanguage; settingsPath = $resolvedSettings; source = $settings.source
         summary = $summary; beforeStyles = @($styles.ToArray()); changes = @()
     }
     Write-Utf8TextAtomic -Path $resolvedReport -Text (($report | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
@@ -86,7 +87,7 @@ try {
     $report.status = 'complete'
     $report.completedAt = [DateTime]::UtcNow.ToString('o')
     $report.summary = [ordered]@{
-        document = $resolvedDocument; language = $TargetLanguage
+        document = $resolvedDocument; language = $TargetLanguage; nativeLanguage = $nativeLanguage
         languageChanges = @($changes | Where-Object kind -eq 'LANGUAGE').Count
         styleSettings = @($settings.paragraphStyles).Count
     }

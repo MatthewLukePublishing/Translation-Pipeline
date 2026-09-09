@@ -106,7 +106,12 @@ drafts receive the bounded targeted recheck.
 Typography finalization first audits the exact document and requested styles,
 then applies language in groups of 20 styles and sizes in groups of five, with
 separate checkpoint saves. Its report remains incomplete until all steps and
-the scoped close succeed. Layout audits inspect styles, links and stories in
+the scoped close succeed. Generic `German` selects InDesign's exact
+`German: 2006 Reform` dictionary; it must be installed, with no fallback to old
+rules or a regional variant. Reports retain both the translation language and
+the native dictionary name, and final audits use the same mapping. Profiles
+may omit point size and leading to preserve source typography.
+Layout audits inspect styles, links and stories in
 separate bounded calls; they never update links, save, or discard unsaved work.
 An error leaves the isolated document available for recovery, without closing
 any unrelated document. Resume a failed finalization only after reviewing its

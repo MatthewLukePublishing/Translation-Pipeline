@@ -1,6 +1,6 @@
 {
   "name": "translation-pipeline",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "description": "A recoverable, auditable publishing translation pipeline for glossary, ICML, diagram, and caption workflows.",
   "license": "MIT",
   "private": false,

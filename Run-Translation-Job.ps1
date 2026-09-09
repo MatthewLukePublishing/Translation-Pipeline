@@ -60,6 +60,7 @@ if (-not (Test-Path -LiteralPath $fileUtilitiesPath -PathType Leaf)) { throw "Mi
 . $fileUtilitiesPath
 if (-not (Test-Path -LiteralPath $jobArchivePath -PathType Leaf)) { throw "Missing archive utility: $jobArchivePath" }
 . $jobArchivePath
+. (Join-Path $stageTwoRoot 'Code\InDesign\InDesignTranslationLanguage.ps1')
 
 function Get-ConfiguredProductsRoot {
     return Resolve-TranslationProductsRoot -ExplicitPath $script:ProductsRootArgument -ProgramRoot $programRoot
@@ -604,9 +605,10 @@ function Invoke-ProductionFinalize {
     $overflowCount = [int]$audit.overflow.storyCount
     $missingLinkCount = [int]$audit.linkStatus.missing
     $outdatedLinkCount = [int]$audit.linkStatus.outdated
+    $nativeLanguage = Resolve-InDesignTranslationLanguage -TargetLanguage ([string]$job.Config.targetLanguage)
     $languageMismatches = @($audit.paragraphStyles | Where-Object {
         ([string]$_.name) -notmatch '^\[' -and
-        -not ([string]$_.language).Equals([string]$job.Config.targetLanguage, [StringComparison]::OrdinalIgnoreCase)
+        -not ([string]$_.language).Equals($nativeLanguage, [StringComparison]::OrdinalIgnoreCase)
     })
     if ($overflowCount -ne 0) { throw "Layout finalization found $overflowCount overset stories. Adjust only the affected style families, then rerun Finalize." }
     if ([string]$audit.tableAudit.status -ne 'complete' -or [int]$audit.overflow.cellCount -ne 0) { throw 'Layout finalization requires a complete table-cell audit without clipped text.' }
@@ -631,6 +633,7 @@ function Invoke-ProductionFinalize {
         overflowStories = 0
         overflowCells = 0
         languageMismatchStyles = 0
+        nativeLanguage = $nativeLanguage
         missingLinks = 0
         outdatedLinks = 0
         documentSha256 = (Get-FileHash -LiteralPath $documentPath -Algorithm SHA256).Hash
@@ -767,9 +770,10 @@ function Complete-ProductionJob {
     if ([int]$layoutAudit.linkStatus.missing -ne 0 -or [int]$layoutAudit.linkStatus.outdated -ne 0) {
         throw 'The final layout audit contains missing or outdated links.'
     }
+    $nativeLanguage = Resolve-InDesignTranslationLanguage -TargetLanguage ([string]$job.Config.targetLanguage)
     $languageMismatches = @($layoutAudit.paragraphStyles | Where-Object {
         ([string]$_.name) -notmatch '^\[' -and
-        -not ([string]$_.language).Equals([string]$job.Config.targetLanguage, [StringComparison]::OrdinalIgnoreCase)
+        -not ([string]$_.language).Equals($nativeLanguage, [StringComparison]::OrdinalIgnoreCase)
     })
     if ($languageMismatches.Count -ne 0) { throw 'The final layout audit contains custom paragraph styles in the wrong language.' }
     if ($job.Config.protectedSourceRules -and -not (Test-Path -LiteralPath ([string]$job.Config.protectedSourceContentManifest) -PathType Leaf)) {

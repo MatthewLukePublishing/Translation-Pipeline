@@ -176,14 +176,22 @@
       // Validate every target in this batch before changing any style.
       for (i = start; i < finish; i++) {
         if (!byPath[requested[i].path] || !byPath[requested[i].path].isValid) throw new Error("Paragraph style not found: " + requested[i].path);
+        var label = requested[i].numberingLabel;
+        if (label) {
+          if (typeof label.before !== "string" || typeof label.after !== "string" || !label.before || !label.after || label.before.length > 50 || label.after.length > 50 || /[\^<>\r\n\t]/.test(label.before + label.after)) throw new Error("Invalid literal numbering label.");
+          var expression = String(byPath[requested[i].path].numberingExpression);
+          if (expression !== label.before + " ^#" && expression !== label.after + " ^#") throw new Error("Numbering expression differs from the audited label: " + requested[i].path);
+        }
       }
       for (i = start; i < finish; i++) {
         var request = requested[i]; s = byPath[request.path];
-        var beforeSize = s.pointSize, beforeLeading = s.leading;
+        var beforeSize = s.pointSize, beforeLeading = s.leading, beforeNumbering = s.numberingExpression;
         if (request.pointSize !== undefined && request.pointSize !== null) s.pointSize = Number(request.pointSize);
         if (request.leading !== undefined && request.leading !== null) s.leading = Number(request.leading);
+        if (request.numberingLabel) s.numberingExpression = request.numberingLabel.after + " ^#";
         rows.push("STYLE|path=" + enc(request.path) + "|beforePointSize=" + enc(beforeSize) + "|afterPointSize=" + enc(s.pointSize) +
-          "|beforeLeading=" + enc(beforeLeading) + "|afterLeading=" + enc(s.leading) + "|basis=" + enc(request.basis || ""));
+          "|beforeLeading=" + enc(beforeLeading) + "|afterLeading=" + enc(s.leading) +
+          "|beforeNumbering=" + enc(beforeNumbering) + "|afterNumbering=" + enc(s.numberingExpression) + "|basis=" + enc(request.basis || ""));
       }
       return rows.length ? rows.join("\n") : "UNCHANGED";
     }

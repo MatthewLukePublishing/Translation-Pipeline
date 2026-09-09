@@ -26,3 +26,25 @@ test('panel reconciliation cannot silently discard style, destination or shared-
   const before=base.replace('<Br/>',second+'<Br/>'), after=native.replace('<Br/>',second.replace(' id="4"','')+'<Br/>');
   assert.throws(()=>reconcilePanelIcml(before,after,['reference']),/shared with an unselected/);
 });
+test('native check-in identity renumbering preserves the same reference graph',()=>{
+  const before=base.replace('Self="s"','Self="ua1"').replace('Self="v"','Self="ua2"').replace('</Document>','<Hyperlink Self="ua3" Source="ua1" Name="Link"/></Document>');
+  const after=native.replace('Self="s"','Self="ub1"').replace('Self="v"','Self="ub2"').replace('</Document>','<Hyperlink Self="ub3" Source="ub1" Name="Link"/></Document>');
+  const result=reconcilePanelIcml(before,after,['reference']);
+  assert.match(result.text,/Self="ua3" Source="ua1"/u);
+  assert.throws(()=>reconcilePanelIcml(before,after.replace('Source="ub1"','Source="ub2"'),['reference']));
+  assert.throws(()=>reconcilePanelIcml(before,after.replace('Self="ub2"','Self="ub1"'),['reference']),/Duplicate/);
+});
+test('native preview regeneration is allowed but descriptive metadata remains exact',()=>{
+  const xmp='<x:xmpmeta><rdf:RDF><rdf:Description xmlns:xmp="urn:xmp" xmlns:dc="urn:dc"><dc:title>Title</dc:title><xmp:Thumbnails><image>old</image></xmp:Thumbnails></rdf:Description></rdf:RDF></x:xmpmeta>';
+  const updated=xmp.replace('xmlns:xmp="urn:xmp" xmlns:dc="urn:dc"','xmlns:dc="urn:dc" xmlns:xmp="urn:xmp"').replace('<xmp:Thumbnails><image>old</image></xmp:Thumbnails>','<xmp:PageInfo><image>new</image></xmp:PageInfo>');
+  const before=base.replace('<Story>',xmp+'<Story>'),after=native.replace('<Story>',updated+'<Story>');
+  assert.ok(reconcilePanelIcml(before,after,['reference']).text.includes(xmp));
+  assert.throws(()=>reconcilePanelIcml(before,after.replace('>Title<','>Changed<'),['reference']),/metadata/);
+});
+test('only calculated table heights and new unindexed empty post-table nodes are restored',()=>{
+  const table='<Table Self="ua4"><Row Self="ua4Row0" MinimumHeight="12" SingleRowHeight="12"/><Cell Self="ua4Cell0"/></Table>';
+  const before=base.replace('<Br/>',table+'<Br/>');
+  const after=native.replace('<Br/>',table.replaceAll('ua4','ub4').replace('SingleRowHeight="12"','SingleRowHeight="24"')+'<Content></Content><Br/>');
+  assert.ok(reconcilePanelIcml(before,after,['reference']).text.includes(table));
+  for(const bad of [after.replace('MinimumHeight="12"','MinimumHeight="24"'),after.replace('<Content></Content><Br/>','<Content>lost</Content><Br/>'),after.replace('SingleRowHeight="24"','SingleRowHeight="NaN"')])assert.throws(()=>reconcilePanelIcml(before,bad,['reference']));
+});

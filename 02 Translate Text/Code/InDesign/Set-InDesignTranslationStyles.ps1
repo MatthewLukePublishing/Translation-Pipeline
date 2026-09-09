@@ -36,6 +36,11 @@ foreach ($setting in @($settings.paragraphStyles)) {
             if ([double]::IsNaN($value) -or [double]::IsInfinity($value) -or $value -le 0 -or $value -gt 1000) { throw "Invalid $field for $($setting.path)." }
         }
     }
+    if ($null -ne $setting.numberingLabel) {
+        foreach ($field in @('before', 'after')) {
+            if ([string]$setting.numberingLabel.$field -notmatch '^[\p{L}][\p{L} .-]{0,49}$') { throw "Invalid numbering label $field for $($setting.path)." }
+        }
+    }
 }
 [IO.Directory]::CreateDirectory((Split-Path -Parent $resolvedReport)) | Out-Null
 $mutex = [Threading.Mutex]::new($false, 'Global\PublishingStep2InDesignTranslation')
@@ -57,6 +62,14 @@ try {
     foreach ($style in $styles) { $knownPaths[[string]$style.path] = $true }
     foreach ($path in $requestedPaths.Keys) {
         if (-not $knownPaths.ContainsKey($path)) { throw "Paragraph style not found; no styles were changed: $path" }
+    }
+    foreach ($setting in @($settings.paragraphStyles)) {
+        if ($null -ne $setting.numberingLabel) {
+            $style = @($styles | Where-Object path -eq $setting.path)[0]
+            if ([string]$style.numberingExpression -cnotin @(([string]$setting.numberingLabel.before + ' ^#'), ([string]$setting.numberingLabel.after + ' ^#'))) {
+                throw "Numbering expression differs from the audited label; no styles were changed: $($setting.path)"
+            }
+        }
     }
     # Publish the read-only plan before the first mutation; interruption leaves explicit incomplete evidence.
     $changes = [Collections.Generic.List[object]]::new()

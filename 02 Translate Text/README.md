@@ -111,6 +111,11 @@ the scoped close succeed. Generic `German` selects InDesign's exact
 rules or a regional variant. Reports retain both the translation language and
 the native dictionary name, and final audits use the same mapping. Profiles
 may omit point size and leading to preserve source typography.
+An audited caption style may use `numberingLabel: {"before":"Image",
+"after":"Imagen"}` to localize only the literal prefix of exactly `Image ^#`.
+The dynamic number token, sequence settings and numeric typography are retained;
+a different numbering scheme fails before mutation. Cross-reference formatting
+and refresh still belong exclusively to the native panel encoder.
 Layout audits inspect styles, links and stories in
 separate bounded calls; they never update links, save, or discard unsaved work.
 An error leaves the isolated document available for recovery, without closing
@@ -187,6 +192,12 @@ Older imports require current QA and reimport to acquire this evidence. If nativ
 InDesign checkout/save has stripped Content IDs or changed the ICML, stop for
 reconciliation with the retained snapshot; never invent IDs or overwrite manual
 edits. Panel-only cross-reference changes and layout audits remain separate.
+The bounded panel reconciler recognizes bijective native object renumbering,
+regenerated XMP previews, calculated table row heights and empty post-table
+Content nodes. It restores the indexed snapshot representation only after all
+other text, metadata, style settings and reference relationships compare equal.
+Retain the native save as evidence, adopt only explicitly selected panel caches,
+then revalidate the workbook and reimport; old QA/import hashes are not reusable.
 The native GREP utility is retained for explicitly scoped, document-owned text,
 but is no longer invoked by this translation pipeline.
 

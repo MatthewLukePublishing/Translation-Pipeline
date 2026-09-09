@@ -53,8 +53,51 @@ function referenceMap(text){
   for(const node of nodes){const name=attribute(node.opening,'Name');if(!name||map.has(name)||count(node.inner,'CrossReferenceSource'))throw Error('Missing, duplicate or nested reference identity.');map.set(name,node);}
   return map;
 }
+function restoreNativeSerialization(before,native){
+  // Native checkout/check-in renumbers local objects and regenerates previews.
+  // Prove the same ordered, bijective identity graph before restoring the indexed
+  // representation. Never discard ordinary metadata or authored style changes.
+  const xmp=/<x:xmpmeta\b[^>]*>[\s\S]*?<\/x:xmpmeta>/gu;
+  const oldMetadata=[...before.matchAll(xmp)],newMetadata=[...native.matchAll(xmp)];
+  if(oldMetadata.length!==newMetadata.length||oldMetadata.length>1)throw Error('Native metadata inventory changed.');
+  const metadataKey=value=>value.replace(/<xmp:(Thumbnails|PageInfo)\b[^>]*>[\s\S]*?<\/xmp:\1>/gu,'')
+    .replace(/<rdf:Description\b[^>]*>/gu,tag=>'<rdf:Description '+[...tag.matchAll(/[\w:]+="[^"]*"/gu)].map(m=>m[0]).sort().join(' ')+'>')
+    .replace(/>\s+</gu,'><');
+  if(oldMetadata.length){
+    if(metadataKey(oldMetadata[0][0])!==metadataKey(newMetadata[0][0]))throw Error('Non-preview metadata changed.');
+    native=native.replace(xmp,()=>oldMetadata[0][0]);
+  }
+  const identities=value=>[...value.matchAll(/<([A-Za-z][\w:]*)\b[^>]*\bSelf="([^"]*)"[^>]*>/gu)];
+  const left=identities(before),right=identities(native),mapping=new Map(),reverse=new Map();
+  const renumberable=new Set(['Table','Row','Column','Cell','CrossReferenceSource','TextVariableInstance','Hyperlink']);
+  if(left.length!==right.length)throw Error('Native object inventory changed.');
+  for(let i=0;i<left.length;i++){
+    const a=left[i],b=right[i];
+    if(a[1]!==b[1])throw Error('Native object order changed.');
+    if(a[2]!==b[2]&&(!renumberable.has(a[1])||!/^u[\w]+$/u.test(a[2])||!/^u[\w]+$/u.test(b[2])))throw Error('Non-local object identity changed.');
+    if(mapping.has(b[2])||reverse.has(a[2]))throw Error('Duplicate native object identity.');
+    mapping.set(b[2],a[2]);reverse.set(a[2],b[2]);
+  }
+  native=native.replace(/<(?![!?])[^>]*>/gu,tag=>tag.replace(/\b(Self|Source)="([^"]*)"/gu,(full,field,value)=>mapping.has(value)?`${field}="${mapping.get(value)}"`:full));
+  const oldRows=[...before.matchAll(/<Row\b[^>]*\/>/gu)];let rowIndex=0;
+  native=native.replace(/<Row\b[^>]*\/>/gu,tag=>{
+    const prior=oldRows[rowIndex++]?.[0];if(!prior)throw Error('Native table row inventory changed.');
+    if(attribute(prior,'Self')!==attribute(tag,'Self')||attribute(prior,'MinimumHeight')!==attribute(tag,'MinimumHeight'))throw Error('Native table row settings changed.');
+    const oldHeight=attribute(prior,'SingleRowHeight'),newHeight=attribute(tag,'SingleRowHeight');
+    if(oldHeight!==newHeight){
+      if(!Number.isFinite(Number(newHeight))||Number(newHeight)<=0||Number(newHeight)<Number(attribute(tag,'MinimumHeight')))throw Error('Invalid native calculated row height.');
+      tag=tag.replace(/\bSingleRowHeight="[^"]*"/u,`SingleRowHeight="${oldHeight}"`);
+    }
+    return tag;
+  });
+  if(rowIndex!==oldRows.length)throw Error('Native table row inventory changed.');
+  // Check-in may add an unindexed empty Content immediately after a table.
+  native=native.replace(/(<\/Table>)\s*<Content\s*(?:\/>|><\/Content>)(?=\s*(?:<Br\s*\/>|<\/CharacterStyleRange>))/gu,'$1');
+  return native;
+}
 function reconcilePanelIcml(before,native,allowedReferenceNames=[]){
   for(const value of [before,native])if(typeof value!=='string'||value.length>5*1024*1024||/<!DOCTYPE|<!ENTITY/iu.test(value))throw Error('Unsafe or unbounded ICML input.');
+  native=restoreNativeSerialization(before,native);
   if(!Array.isArray(allowedReferenceNames)||allowedReferenceNames.length>25||new Set(allowedReferenceNames).size!==allowedReferenceNames.length)throw Error('Invalid bounded panel reference scope.');
   const allowed=new Set(allowedReferenceNames),left=outerParagraphs(before),right=outerParagraphs(native);
   if(ordinaryStructure(before)!==ordinaryStructure(native))throw Error('Non-reference formatting or structure changed; preserve and review the native file.');

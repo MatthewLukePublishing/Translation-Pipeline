@@ -210,3 +210,15 @@ test("table-cell audits detect clipping separately from stories and reject unins
   assert.deepEqual(h.counts(), { saves: 0, closes: 0, updates: 0 });
   assert.equal(h.app.scriptPreferences.userInteractionLevel, "original");
 });
+test('caption numbering localizes only an audited literal label and retains dynamic numbering',()=>{
+  const h=typographyHarness();h.run('open');
+  h.styles[0].numberingExpression='Image ^#';h.styles[1].numberingExpression='Image ^H.^#';
+  const setting={path:'Style 0',numberingLabel:{before:'Image',after:'Imagen'}};
+  assert.match(h.run('apply',{count:2,settings:[setting,{...setting,path:'Style 1'}]}),/^ERROR.*audited label/);
+  assert.equal(h.styles[0].numberingExpression,'Image ^#');
+  assert.match(h.run('apply',{count:1,settings:[setting]}),/afterNumbering=Imagen%20%5E%23/);
+  assert.equal(h.styles[0].numberingExpression,'Imagen ^#');assert.equal(h.styles[0].pointSize,12);
+  assert.equal(h.styles[1].numberingExpression,'Image ^H.^#');
+  assert.match(h.run('apply',{count:1,settings:[setting]}),/^STYLE/,'resumes without changing the numbering scheme');
+  assert.match(h.run('apply',{count:1,settings:[{...setting,numberingLabel:{before:'Imagen',after:'Bad ^#'}}]}),/^ERROR.*literal/);
+});

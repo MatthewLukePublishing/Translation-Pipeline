@@ -15,6 +15,8 @@ import {
   applyPortugueseTranslations,
   assertOnlyPortugueseValuesChanged,
   readCaptionWorksheetState,
+  readCaptionWorkbookSnapshot,
+  assertCaptionLineBreaks,
 } from "./CaptionWorkbook.mjs";
 
 const { writeJsonAtomicSync } = atomicFiles;
@@ -114,10 +116,6 @@ function assertChatGptLogin() {
   }
 }
 
-function lineBreaks(value) {
-  return String(value ?? "").match(/\r\n|\r|\n/g) || [];
-}
-
 function boundaryWhitespace(value) {
   const text = String(value ?? "");
   return {
@@ -128,12 +126,11 @@ function boundaryWhitespace(value) {
 
 async function loadWorkbook() {
   if (!fs.existsSync(WORKBOOK_PATH)) throw new Error(`Missing caption workbook: ${WORKBOOK_PATH}`);
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.readFile(WORKBOOK_PATH);
+  const { workbook, inputWorkbookSha256 } = await readCaptionWorkbookSnapshot(WORKBOOK_PATH);
   if (workbook.worksheets.length !== 1) throw new Error("Caption workbook must contain exactly one worksheet.");
   const worksheet = workbook.worksheets[0];
   const { sourceSnapshot, pending } = readCaptionWorksheetState(worksheet, EXPECTED_HEADERS);
-  return { workbook, worksheet, sourceSnapshot, pending };
+  return { workbook, worksheet, sourceSnapshot, pending, inputWorkbookSha256 };
 }
 
 function makeBatches(rows) {
@@ -212,9 +209,7 @@ function validateResponse(response, batch) {
     if (translated.has(item.id)) throw new Error(`Duplicate caption id in ${batch.id}: ${item.id}`);
     if (typeof item.translated !== "string" || !item.translated.trim()) throw new Error(`Blank caption translation for ${item.id}.`);
     const source = rowsById.get(item.id).english;
-    if (JSON.stringify(lineBreaks(source)) !== JSON.stringify(lineBreaks(item.translated))) {
-      throw new Error(`Line breaks changed for ${item.id}.`);
-    }
+    assertCaptionLineBreaks(source, item.translated, item.id);
     if (JSON.stringify(boundaryWhitespace(source)) !== JSON.stringify(boundaryWhitespace(item.translated))) {
       throw new Error(`Boundary whitespace changed for ${item.id}.`);
     }
@@ -279,8 +274,7 @@ async function queryBatch(batch, model) {
     "--color", "never",
   ], { cwd: STATE_DIR, input: prompt, timeoutMs: QUERY_TIMEOUT_MS });
   if (run.status !== 0) {
-    const diagnostics = `${run.stdout || ""}\n${run.stderr || ""}`.slice(-12000);
-    throw new Error(`Caption query ${batch.id} exited with code ${run.status}.\n${diagnostics}`);
+    throw new Error(`Caption query ${batch.id} exited with code ${run.status}. Raw process output is withheld because it may contain authentication details.`);
   }
   const raw = readJson(rawPath, `${batch.id} raw response`);
   const restored = validateResponse(raw, batch);
@@ -294,6 +288,9 @@ function timestamp() {
 }
 
 const cli = parseArgs(process.argv.slice(2));
+if (cli.check && fs.existsSync(FINALIZATION_JOURNAL)) {
+  throw new Error("Caption check is read-only. Recover the pending finalization transaction with a normal run first.");
+}
 const recovery = recoverFileSetJournalSync(FINALIZATION_JOURNAL);
 if (recovery.recovered) console.log(`CAPTION_FINALIZATION_RECOVERED|phase=${recovery.phase}`);
 const loaded = await loadWorkbook();
@@ -315,7 +312,7 @@ const plan = {
   reasoningEffort: REASONING_EFFORT,
   targetLanguage: TARGET_LANGUAGE,
   editorialRules: EDITORIAL_POLICY,
-  inputWorkbookSha256: sha256File(WORKBOOK_PATH),
+  inputWorkbookSha256: loaded.inputWorkbookSha256,
   pendingRows: loaded.pending.map((row) => ({ id: row.id, rowNumber: row.rowNumber, english: row.english })),
   batches: batches.map((batch) => ({ id: batch.id, ids: batch.rows.map((row) => row.id) })),
 };
@@ -386,10 +383,15 @@ const report = {
   completedAt,
 };
 const finalState = { ...readJson(STATE_PATH, "caption subscription state"), status: "complete", completedAt, outputSha256: report.outputSha256 };
+const finalStateSha256 = sha256File(STATE_PATH).toLowerCase();
+report.finalModelResolution = await resolveLatestSubscriptionModel({
+  nodePath: CODEX_NODE_EXE, cliPath: CODEX_CLI_JS, expectedModel: modelResolution.model, reasoningEffort: REASONING_EFFORT,
+});
+finalState.finalModelResolution = report.finalModelResolution;
 const transaction = commitFileSetWithJournalSync(FINALIZATION_JOURNAL, [
-  { filePath: WORKBOOK_PATH, data: outputBytes },
+  { filePath: WORKBOOK_PATH, data: outputBytes, expectedSha256: plan.inputWorkbookSha256.toLowerCase() },
   { filePath: archiveWorkbook, data: outputBytes },
   { filePath: reportPath, data: Buffer.from(`${JSON.stringify(report, null, 2)}\n`, "utf8") },
-  { filePath: STATE_PATH, data: Buffer.from(`${JSON.stringify(finalState, null, 2)}\n`, "utf8") },
+  { filePath: STATE_PATH, data: Buffer.from(`${JSON.stringify(finalState, null, 2)}\n`, "utf8"), expectedSha256: finalStateSha256 },
 ]);
 console.log(`CAPTION_TRANSLATION_COMPLETE|rows=${loaded.pending.length}|batches=${batches.length}|model=${modelResolution.model}|transaction=${transaction.transactionId}`);

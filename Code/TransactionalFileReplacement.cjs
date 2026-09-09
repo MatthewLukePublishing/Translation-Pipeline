@@ -19,7 +19,13 @@ function normalizedPathKey(filePath) {
 }
 
 function assertRegularFileIfPresent(filePath, label) {
-  if (fs.existsSync(filePath) && !fs.statSync(filePath).isFile()) {
+  for (let current = path.resolve(filePath); ; current = path.dirname(current)) {
+    if (fs.existsSync(current) && fs.lstatSync(current).isSymbolicLink()) {
+      throw new Error(`${label} must not use a symbolic link or junction: ${current}`);
+    }
+    if (path.dirname(current) === current) break;
+  }
+  if (fs.existsSync(filePath) && !fs.lstatSync(filePath).isFile()) {
     throw new Error(`${label} must identify a file, not a directory: ${filePath}`);
   }
 }
@@ -28,7 +34,7 @@ function assertTransactionArtifactPath(filePath, artifactPath, role, journalPath
   const targetKey = normalizedPathKey(filePath);
   const artifactKey = normalizedPathKey(artifactPath);
   const prefix = `${targetKey}.codex-${role}-`;
-  if (artifactKey === targetKey || !artifactKey.startsWith(prefix) || artifactKey.length === prefix.length) {
+  if (!artifactKey.startsWith(prefix) || !/^[a-z0-9-]+$/i.test(artifactKey.slice(prefix.length))) {
     throw new Error(`Invalid ${role} path for ${filePath} in transaction journal: ${journalPath}`);
   }
 }
@@ -101,9 +107,9 @@ function discardReplacementBackupSync(transaction) {
   fs.rmSync(transaction.backup, { force: true });
 }
 
-function writeJournalSync(journalPath, value) {
+function writeJournalSync(journalPath, value, initial = false) {
   fs.mkdirSync(path.dirname(journalPath), { recursive: true });
-  const temporary = `${journalPath}.tmp-${process.pid}-${crypto.randomUUID()}`;
+  const temporary = initial ? journalPath : `${journalPath}.tmp-${process.pid}-${crypto.randomUUID()}`;
   const payload = `${JSON.stringify(value, null, 2)}\n`;
   const descriptor = fs.openSync(temporary, "wx");
   try {
@@ -112,11 +118,16 @@ function writeJournalSync(journalPath, value) {
   } finally {
     fs.closeSync(descriptor);
   }
-  fs.renameSync(temporary, journalPath);
+  if (!initial) fs.renameSync(temporary, journalPath);
+}
+
+function fileHash(filePath) {
+  assertRegularFileIfPresent(filePath, "Transaction file");
+  return fs.existsSync(filePath) ? crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex") : null;
 }
 
 function validateJournal(journal, journalPath) {
-  if (!journal || journal.schemaVersion !== 1 || !Array.isArray(journal.items) || !journal.items.length) {
+  if (!journal || ![1, 2].includes(journal.schemaVersion) || !Array.isArray(journal.items) || !journal.items.length) {
     throw new Error(`Invalid replacement transaction journal: ${journalPath}`);
   }
   if (typeof journal.transactionId !== "string" || !journal.transactionId.trim()) {
@@ -154,14 +165,44 @@ function validateJournal(journal, journalPath) {
         throw new Error(`Duplicate or overlapping artifact in transaction journal: ${artifactPath}`);
       }
       artifactPaths.add(normalized);
+      assertRegularFileIfPresent(artifactPath, "Transaction artifact");
+    }
+  }
+  if (journal.schemaVersion !== 2) {
+    throw new Error(`Legacy transaction has no content hashes; manual reconciliation is required. All files retained: ${journalPath}`);
+  }
+  for (const item of journal.items) {
+    if (!/^[a-f0-9]{64}$/.test(item.newSha256) ||
+        (item.hadOriginal ? !/^[a-f0-9]{64}$/.test(item.originalSha256) : item.originalSha256 !== null)) {
+      throw new Error(`Invalid content hashes in transaction journal: ${journalPath}`);
     }
   }
 }
 
-function recoverFileSetJournalSync(journalPath) {
+function recoverFileSetJournalSync(journalPath, activeTransactionId) {
   if (!fs.existsSync(journalPath)) return { recovered: false, phase: "none" };
+  assertRegularFileIfPresent(journalPath, "Transaction journal");
   const journal = JSON.parse(fs.readFileSync(journalPath, "utf8").replace(/^\uFEFF/, ""));
   validateJournal(journal, journalPath);
+  if (journal.ownerPid && activeTransactionId !== journal.transactionId) {
+    let running = true;
+    try { process.kill(journal.ownerPid, 0); } catch (error) { if (error.code === "ESRCH") running = false; }
+    if (running) throw new Error(`Transaction owner may still be running; refusing concurrent recovery: ${journalPath}`);
+  }
+
+  // Validate the entire set before deleting or restoring anything. A journal is
+  // not authority to overwrite a user's edits made after an interruption.
+  for (const item of journal.items) {
+    const current = fileHash(item.filePath);
+    const backup = fileHash(item.backup);
+    const staged = fileHash(item.replacement);
+    const safe = (backup === null || (item.hadOriginal && backup === item.originalSha256)) &&
+      (staged === null || staged === item.newSha256) &&
+      (journal.phase === "committed" ? current === item.newSha256 :
+        item.hadOriginal ? (backup !== null ? [null, item.originalSha256, item.newSha256].includes(current) : current === item.originalSha256) :
+          [null, item.newSha256].includes(current));
+    if (!safe) throw new Error(`Transaction content changed or required backup is missing; manual reconciliation required. All files retained: ${item.filePath}`);
+  }
 
   if (journal.phase === "committed") {
     for (const item of journal.items) {
@@ -177,8 +218,7 @@ function recoverFileSetJournalSync(journalPath) {
     const item = journal.items[index];
     try {
       if (fs.existsSync(item.backup)) {
-        fs.rmSync(item.filePath, { force: true });
-        fs.renameSync(item.backup, item.filePath);
+        restoreBackupSync(item.filePath, item.backup);
       } else if (!item.hadOriginal) {
         fs.rmSync(item.filePath, { force: true });
       }
@@ -212,32 +252,43 @@ function commitFileSetWithJournalSync(journalPath, replacements) {
       backup: siblingTransactionPath(filePath, "set-backup"),
       replacement: siblingTransactionPath(filePath, "set-new"),
       hadOriginal: fs.existsSync(filePath),
-      data: replacement.data,
-      options: replacement.options,
+      originalSha256: fileHash(filePath),
+      data: Buffer.isBuffer(replacement.data) ? replacement.data : Buffer.from(replacement.data,
+        typeof replacement.options === "string" ? replacement.options : replacement.options?.encoding || "utf8"),
+      expectedSha256: replacement.expectedSha256,
     };
   });
+  for (const item of items) {
+    item.newSha256 = crypto.createHash("sha256").update(item.data).digest("hex");
+    if (item.expectedSha256 !== undefined && item.originalSha256 !== item.expectedSha256) {
+      throw new Error(`Transaction input changed before publication: ${item.filePath}`);
+    }
+  }
   const journal = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     transactionId: crypto.randomUUID(),
+    ownerPid: process.pid,
     phase: "preparing",
     createdAt: new Date().toISOString(),
-    items: items.map(({ data, options, ...item }) => item),
+    items: items.map(({ data, expectedSha256, ...item }) => item),
   };
 
+  // Exclusive creation happens outside the recovery catch: never recover a
+  // different writer's journal when claiming this transaction fails.
+  writeJournalSync(resolvedJournalPath, journal, true);
   try {
-    writeJournalSync(resolvedJournalPath, journal);
     for (const item of items) {
       fs.mkdirSync(path.dirname(item.filePath), { recursive: true });
-      const options = typeof item.options === "string"
-        ? { encoding: item.options, flag: "wx" }
-        : { ...(item.options || {}), flag: "wx" };
-      fs.writeFileSync(item.replacement, item.data, options);
+      const descriptor = fs.openSync(item.replacement, "wx");
+      try { fs.writeFileSync(descriptor, item.data); fs.fsyncSync(descriptor); }
+      finally { fs.closeSync(descriptor); }
     }
     journal.phase = "prepared";
     writeJournalSync(resolvedJournalPath, journal);
     journal.phase = "applying";
     writeJournalSync(resolvedJournalPath, journal);
     for (const item of items) {
+      if (fileHash(item.filePath) !== item.originalSha256) throw new Error(`Transaction input changed during publication: ${item.filePath}`);
       if (item.hadOriginal) fs.renameSync(item.filePath, item.backup);
       fs.renameSync(item.replacement, item.filePath);
     }
@@ -246,13 +297,12 @@ function commitFileSetWithJournalSync(journalPath, replacements) {
     writeJournalSync(resolvedJournalPath, journal);
   } catch (error) {
     let recoveryError;
-    try { recoverFileSetJournalSync(resolvedJournalPath); }
+    try { recoverFileSetJournalSync(resolvedJournalPath, journal.transactionId); }
     catch (caught) { recoveryError = caught; }
-    for (const item of items) fs.rmSync(item.replacement, { force: true });
     throw attachRecoveryFailure(error, recoveryError);
   }
 
-  const recovery = recoverFileSetJournalSync(resolvedJournalPath);
+  const recovery = recoverFileSetJournalSync(resolvedJournalPath, journal.transactionId);
   return { transactionId: journal.transactionId, filesCommitted: items.length, recovery };
 }
 

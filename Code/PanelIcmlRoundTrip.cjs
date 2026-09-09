@@ -35,6 +35,18 @@ function outerParagraphs(text){
 function withoutReferences(text){return text.replace(/<CrossReferenceSource\b[^>]*>[\s\S]*?<\/CrossReferenceSource>/gu,'');}
 function contentText(text){return contentElements(text).map(node=>node.inner).join('');}
 function count(text,name){return [...text.matchAll(new RegExp(`<${name}(?=[\\s/>])`,'gu'))].length;}
+function ordinaryStructure(text){
+  // Native saves may remove index IDs and split Content nodes. Those are the
+  // only ordinary-content representation changes this helper can reconcile.
+  // Preserve style attributes, table boundaries, destinations and metadata.
+  return text.replace(/<CrossReferenceFormat\b[^>]*>[\s\S]*?<\/CrossReferenceFormat>/gu,'')
+    .replace(/(<CrossReferenceSource\b[^>]*>)[\s\S]*?<\/CrossReferenceSource>/gu,'$1</CrossReferenceSource>')
+    .replace(/<(?:ParagraphStyleRange|Content)\b[^>]*>/gu,tag=>tag.replace(/\s+id="[^"]*"/gu,''))
+    .replace(/<Content\s*\/>/gu,'<Content></Content>')
+    .replace(/<\/Content>\s*<Content>/gu,'')
+    .replace(/<Content>([\s\S]*?)<\/Content>/gu,(_,value)=>`<Content>${JSON.stringify(value).replace(/[<>]/gu,c=>c==='<'?'\\u003c':'\\u003e')}</Content>`)
+    .replace(/>\s+</gu,'><').trim();
+}
 function referenceMap(text){
   const nodes=elements(text,'CrossReferenceSource'),map=new Map();
   if(count(text,'CrossReferenceSource')!==nodes.length)throw Error('Unsupported or unbalanced reference structure.');
@@ -45,6 +57,7 @@ function reconcilePanelIcml(before,native,allowedReferenceNames=[]){
   for(const value of [before,native])if(typeof value!=='string'||value.length>5*1024*1024||/<!DOCTYPE|<!ENTITY/iu.test(value))throw Error('Unsafe or unbounded ICML input.');
   if(!Array.isArray(allowedReferenceNames)||allowedReferenceNames.length>25||new Set(allowedReferenceNames).size!==allowedReferenceNames.length)throw Error('Invalid bounded panel reference scope.');
   const allowed=new Set(allowedReferenceNames),left=outerParagraphs(before),right=outerParagraphs(native);
+  if(ordinaryStructure(before)!==ordinaryStructure(native))throw Error('Non-reference formatting or structure changed; preserve and review the native file.');
   if(!left.length||left.length!==right.length)throw Error('Paragraph structure changed during the panel session.');
   for(let p=0;p<left.length;p++){
     if(attribute(left[p],'AppliedParagraphStyle')!==attribute(right[p],'AppliedParagraphStyle'))throw Error('Paragraph style changed during the panel session.');
@@ -86,6 +99,7 @@ function reconcilePanelIcml(before,native,allowedReferenceNames=[]){
     const current=elements(native,'CrossReferenceFormat').filter(n=>attribute(n.opening,'Self')===format);
     if(old.length!==1||current.length!==1||attribute(old[0].opening,'Name')!==attribute(current[0].opening,'Name'))throw Error('Panel format inventory is incomplete.');
     if(count(old[0].text,'BuildingBlock')!==count(current[0].text,'BuildingBlock'))throw Error('Panel format dynamic structure changed.');
+    if(old[0].text!==current[0].text && [...oldReferences].some(([name,node])=>!allowed.has(name)&&attribute(node.opening,'AppliedFormat')===format))throw Error('Changed panel format is shared with an unselected reference.');
     replacements.push({index:old[0].index,before:old[0].text,after:current[0].text});
   }
   const text=applyReplacements(before,replacements);

@@ -7,7 +7,7 @@ import fileUtilities from "../../../Code/FileUtilities.cjs";
 import textNormalization from "../../../Code/TextNormalization.cjs";
 import editorialRules from "../../../Code/TranslationEditorialRules.cjs";
 import grepRules from "../../../Code/TranslationGrepRules.cjs";
-import { engineSha256 } from "../IcmlGrepJob.mjs";
+import { engineSha256, hash as grepHash } from "../IcmlGrepJob.mjs";
 import transactionalFiles from "../../../Code/TransactionalFileReplacement.cjs";
 import { fnv1a32Utf16 } from "../ContentFingerprint.mjs";
 import { normalizeContentId } from "../ContentIds.mjs";
@@ -310,6 +310,9 @@ async function main() {
   const textReportPath = path.join(reportsDir, "qa_report.txt");
   const acronymPath = path.join(jobPath, "glossary", "acronyms.json");
   const wordsPath = path.join(jobPath, "glossary", "words.json");
+  const validationInputs = [configPath, manifestPath, inputPath, outputPath,
+    path.join(jobPath, "glossary", "acronyms.json"), wordsPath];
+  const validationHashes = new Map(validationInputs.map(file => [file, fs.existsSync(file) ? sha256(file) : null]));
   fs.mkdirSync(reportsDir, { recursive: true });
 
   if (manifestStatusBeforeQa === "imported") {
@@ -668,13 +671,20 @@ async function main() {
     },
   };
 
+  const grepProtection = {
+    protectedContentIds: [...protectedSourceIds, ...panelManaged.keys()],
+    protectedStyles: ["Credits", config.protectedSourceRules?.paragraphStyleName].filter(Boolean),
+    protectedStrings: [...grepProtectedStrings],
+  };
+  if (importStillCurrent && config.productionWorkspace &&
+      manifest.import?.grep?.protectionSha256 !== grepHash(JSON.stringify(grepProtection))) importStillCurrent = false;
   if (manifestStatusBeforeQa === "imported" && !importStillCurrent) {
     // Retain only the most recent superseded evidence, not an unbounded history.
     // Publication is atomic with QA below, so a changed workbook cannot inherit
     // imported/finalized status, even when its new text passes all checks.
     manifest.invalidatedImport = {
       invalidatedAt: report.generatedAt,
-      reason: "Workbook bytes, payload or ICML GREP implementation changed; re-import and finalization required.",
+      reason: "Workbook bytes, payload, ICML GREP implementation or protection policy changed; re-import and finalization required.",
       import: manifest.import || null,
       layoutFinalization: manifest.layoutFinalization || null,
     };
@@ -686,11 +696,7 @@ async function main() {
   manifest.updatedAt = new Date().toISOString();
   manifest.qa = {
     status,
-    grepProtection: {
-      protectedContentIds: [...protectedSourceIds, ...panelManaged.keys()],
-      protectedStyles: ["Credits", config.protectedSourceRules?.paragraphStyleName].filter(Boolean),
-      protectedStrings: [...grepProtectedStrings],
-    },
+    grepProtection,
     editorialRules: report.editorialRules,
     completedAt: report.generatedAt,
     summary: report.summary,
@@ -698,10 +704,13 @@ async function main() {
     jsonReport: jsonReportPath,
     textReport: textReportPath,
   };
+  for (const [file, before] of validationHashes) {
+    if ((fs.existsSync(file) ? sha256(file) : null) !== before) throw new Error("QA inputs changed during validation; no passing evidence was published.");
+  }
   const transaction = commitFileSetWithJournalSync(qaTransactionJournal, [
     { filePath: jsonReportPath, data: Buffer.from(`${JSON.stringify(report, null, 2)}\n`, "utf8") },
     { filePath: textReportPath, data: Buffer.from(`${makeTextReport(report)}\n`, "utf8") },
-    { filePath: manifestPath, data: Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, "utf8") },
+    { filePath: manifestPath, data: Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, "utf8"), expectedSha256: validationHashes.get(manifestPath).toLowerCase() },
   ]);
 
   console.log(`QA ${status.toUpperCase()}: ${errors} error(s), ${warnings} warning(s)`);

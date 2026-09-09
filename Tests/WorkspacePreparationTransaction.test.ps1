@@ -65,7 +65,49 @@ try {
     Assert-Condition (Test-Path -LiteralPath (Join-Path $workspace 'committed-before-cleanup.indd')) 'Committed recovery removed workspace output.'
     Assert-Condition (Test-Path -LiteralPath $job -PathType Container) 'Committed recovery removed the job directory.'
 
-    Write-Output 'WORKSPACE_TRANSACTION_TEST_OK|cases=3'
+    foreach ($variant in @('foreign-pointer', 'unowned-target', 'invalid-phase', 'foreign-committed-marker', 'appeared-target')) {
+        $workspace = Join-Path $productsRoot ('review-' + $variant)
+        $job = Join-Path $jobsRoot ('review-' + $variant)
+        Write-WorkspacePreparationJsonAtomic -Path $activeJobPath -Value @{ jobPath = (Join-Path $jobsRoot 'previous') }
+        [void](Start-WorkspacePreparationTransaction -JournalPath $journalPath -WorkspaceRoot $workspace -JobPath $job -ActiveJobPath $activeJobPath)
+        if ($variant -eq 'appeared-target') {
+            [IO.Directory]::CreateDirectory($job) | Out-Null
+            [IO.File]::WriteAllText((Join-Path $job 'user.txt'), 'retain')
+            $failed = $false
+            try { Initialize-WorkspacePreparationTargets -JournalPath $journalPath | Out-Null } catch { $failed = $true }
+            Assert-Condition $failed 'Initialization adopted a foreign target.'
+            Assert-Condition (-not (Test-Path -LiteralPath $workspace)) 'Initialization changed the first target before checking the second.'
+        } else {
+            [void](Initialize-WorkspacePreparationTargets -JournalPath $journalPath)
+            [IO.File]::WriteAllText((Join-Path $workspace 'user.txt'), 'retain')
+            [IO.File]::WriteAllText((Join-Path $job 'user.txt'), 'retain')
+            if ($variant -eq 'foreign-pointer') {
+                Write-WorkspacePreparationJsonAtomic -Path $activeJobPath -Value @{ jobPath = (Join-Path $jobsRoot 'other-active') }
+            } elseif ($variant -eq 'unowned-target') {
+                Remove-Item -LiteralPath (Join-Path $workspace $script:WorkspacePreparationMarkerName)
+            } elseif ($variant -eq 'foreign-committed-marker') {
+                [void](Set-WorkspacePreparationTransactionPhase -JournalPath $journalPath -Phase 'committed')
+                Write-WorkspacePreparationJsonAtomic -Path (Join-Path $job $script:WorkspacePreparationMarkerName) -Value @{ transactionId = 'another-owner' }
+            } else {
+                $journal = Read-WorkspacePreparationJournal -JournalPath $journalPath
+                $journal.phase = 'unknown'
+                Write-WorkspacePreparationJsonAtomic -Path $journalPath -Value $journal
+            }
+            $activeBefore = [IO.File]::ReadAllText($activeJobPath)
+            $failed = $false
+            try {
+                Recover-WorkspacePreparationTransaction -JournalPath $journalPath -AllowedWorkspaceParent $productsRoot `
+                    -AllowedJobsRoot $jobsRoot -ExpectedActiveJobPath $activeJobPath | Out-Null
+            } catch { $failed = $true }
+            Assert-Condition $failed "Unsafe recovery did not fail: $variant"
+            Assert-Condition ([IO.File]::ReadAllText($activeJobPath) -ceq $activeBefore) "Recovery changed the active pointer: $variant"
+            Assert-Condition (Test-Path -LiteralPath (Join-Path $workspace 'user.txt')) "Recovery deleted the workspace: $variant"
+            Assert-Condition (Test-Path -LiteralPath (Join-Path $job 'user.txt')) "Recovery partially deleted the job: $variant"
+        }
+        Assert-Condition (Test-Path -LiteralPath $journalPath) "Recovery discarded evidence: $variant"
+        Remove-Item -LiteralPath $journalPath
+    }
+    Write-Output 'WORKSPACE_TRANSACTION_TEST_OK|cases=8'
 } finally {
     $resolvedTestRoot = [IO.Path]::GetFullPath($testRoot)
     $resolvedTempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'

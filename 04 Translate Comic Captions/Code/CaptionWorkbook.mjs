@@ -1,8 +1,26 @@
 import textNormalization from "../../Code/TextNormalization.cjs";
+import fs from "node:fs";
+import crypto from "node:crypto";
+import ExcelJS from "exceljs";
+import { lineBreaks } from "../../02 Translate Text/Code/LineBreaks.mjs";
 
 const { normalizeCellValue } = textNormalization;
 
 export const PORTUGUESE_COLUMN = 5;
+
+export async function readCaptionWorkbookSnapshot(workbookPath) {
+  const bytes = fs.readFileSync(workbookPath);
+  const inputWorkbookSha256 = crypto.createHash("sha256").update(bytes).digest("hex").toUpperCase();
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(bytes);
+  return { workbook, inputWorkbookSha256 };
+}
+
+export function assertCaptionLineBreaks(source, translated, id) {
+  if (JSON.stringify(lineBreaks(source)) !== JSON.stringify(lineBreaks(translated))) {
+    throw new Error(`Line breaks changed for ${id}.`);
+  }
+}
 
 function captionRowId(rowNumber) {
   return `row_${String(rowNumber).padStart(6, "0")}`;

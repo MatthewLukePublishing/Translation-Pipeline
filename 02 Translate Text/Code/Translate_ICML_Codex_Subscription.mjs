@@ -718,8 +718,7 @@ async function runTranslationBatch({ batch, config, nodePath, cliPath, schemaPat
   ], { cwd: stateRoot, input: prompt, timeoutMs: config.queryTimeoutMs });
 
   if (run.status !== 0) {
-    const diagnostics = `${run.stdout || ""}\n${run.stderr || ""}`.slice(-12000);
-    throw new Error(`Codex subscription query failed for ${batch.batchId} with exit code ${run.status}.\n${diagnostics}`);
+    throw new Error(`Codex subscription query failed for ${batch.batchId} with exit code ${run.status}. Raw process output is withheld because it may contain authentication details.`);
   }
   const parsed = readJson(rawResponsePath, `${batch.batchId} raw Codex response`);
   const restored = await finishResponse(parsed);
@@ -757,6 +756,7 @@ if (!/^(?!\.{1,2}$)[A-Za-z0-9][A-Za-z0-9._-]*$/.test(stateName)) {
 }
 const stateRoot = path.join(jobDir, "state", stateName);
 const finalizationJournal = path.join(stateRoot, "finalization_transaction.json");
+if (cli.check && fs.existsSync(finalizationJournal)) throw new Error("Subscription check is read-only; recover the pending finalization transaction with a normal run first.");
 const finalizationRecovery = recoverFileSetJournalSync(finalizationJournal);
 if (finalizationRecovery.recovered) {
   console.log(`CODEX_FINALIZATION_RECOVERED|phase=${finalizationRecovery.phase}`);
@@ -792,6 +792,9 @@ const bookInstructions = readBookTranslationInstructions(jobDir, config);
 
 const inputPath = path.join(jobDir, "input", "content_export.xlsx");
 const outputPath = path.join(jobDir, "output", "content_import.xlsx");
+const outputBeforeTranslationSha256 = fs.existsSync(outputPath) ? sha256File(outputPath).toLowerCase() : null;
+const inputBeforeTranslationSha256 = sha256File(inputPath);
+const configBeforeTranslationSha256 = sha256File(configPath);
 const schemaPath = path.join(stateRoot, "response_schema.json");
 const statePath = path.join(stateRoot, "state.json");
 const artifactNodeModules = process.env.CODEX_ARTIFACT_NODE_MODULES;
@@ -808,6 +811,7 @@ const workbook = await SpreadsheetFile.importXlsx(await FileBlob.load(inputPath)
 const worksheet = workbook.worksheets.getItemAt(0);
 const usedRange = worksheet.getUsedRange(true);
 const sourceValues = usedRange.values.map((row) => row.map(normalizeCell));
+if (sha256File(inputPath) !== inputBeforeTranslationSha256) throw new Error("Source workbook changed while it was being loaded.");
 const contract = assertWorkbook(sourceValues, inputPath);
 const groups = buildGroups(sourceValues);
 const protectedSource = readProtectedSourceManifest(jobDir, config);
@@ -882,7 +886,7 @@ const planCore = {
   schemaVersion: 2,
   editorialRules: resolveEditorialRules(config.targetLanguage, "text"),
   inputDataSha256: sha256Json(sourceValues),
-  inputFileSha256: sha256File(inputPath),
+  inputFileSha256: inputBeforeTranslationSha256,
   glossarySha256: sha256Json(glossary),
   model: String(config.model || ""),
   modelPolicy: REQUIRED_MODEL_POLICY,
@@ -1168,6 +1172,7 @@ try {
     completedAt,
   };
   const finalManifest = readJson(manifestPath, "job manifest");
+  const finalManifestSha256 = sha256File(manifestPath).toLowerCase();
   finalManifest.status = "translated";
   finalManifest.updatedAt = completedAt;
   finalManifest.subscriptionTranslation = {
@@ -1188,11 +1193,14 @@ try {
   report.finalModelResolution = finalModelResolution;
   finalManifest.subscriptionTranslation.finalModelResolution = finalModelResolution;
   editorialPrompt(config.targetLanguage, "text", planIdentity.editorialRules.sha256);
+  if (sha256File(inputPath) !== inputBeforeTranslationSha256 || sha256File(configPath) !== configBeforeTranslationSha256) {
+    throw new Error("Source workbook or job configuration changed during translation; output was not published.");
+  }
   const finalization = commitFileSetWithJournalSync(finalizationJournal, [
-    { filePath: outputPath, data: outputBytes },
+    { filePath: outputPath, data: outputBytes, expectedSha256: outputBeforeTranslationSha256 },
     { filePath: previewPath, data: previewBytes },
     { filePath: reportPath, data: Buffer.from(`${JSON.stringify(report, null, 2)}\n`, "utf8") },
-    { filePath: manifestPath, data: Buffer.from(`${JSON.stringify(finalManifest, null, 2)}\n`, "utf8") },
+    { filePath: manifestPath, data: Buffer.from(`${JSON.stringify(finalManifest, null, 2)}\n`, "utf8"), expectedSha256: finalManifestSha256 },
   ]);
   if (sha256File(outputPath) !== outputSha256) {
     throw new Error("Committed subscription workbook hash does not match the verified output bytes.");

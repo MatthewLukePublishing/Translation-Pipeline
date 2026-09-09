@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const hash = value => require("node:crypto").createHash("sha256").update(value).digest("hex");
 const { pathToFileURL } = require("node:url");
 
 const ROOT = path.resolve(__dirname, "..");
@@ -311,12 +312,12 @@ test("file-set transactions commit together and recover interrupted application"
     fs.renameSync(second, secondBackup);
     fs.writeFileSync(secondReplacement, "pending-second", "utf8");
     fs.writeFileSync(journal, `${JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: 2,
       transactionId: "fixture",
       phase: "applying",
       items: [
-        { filePath: first, backup: firstBackup, replacement: firstReplacement, hadOriginal: true },
-        { filePath: second, backup: secondBackup, replacement: secondReplacement, hadOriginal: true },
+        { filePath: first, backup: firstBackup, replacement: firstReplacement, hadOriginal: true, originalSha256: hash("new-first"), newSha256: hash("partial-first") },
+        { filePath: second, backup: secondBackup, replacement: secondReplacement, hadOriginal: true, originalSha256: hash("new-second"), newSha256: hash("pending-second") },
       ],
     }, null, 2)}\n`, "utf8");
     const recovery = transactionFiles.recoverFileSetJournalSync(journal);

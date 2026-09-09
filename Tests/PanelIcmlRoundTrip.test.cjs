@@ -20,3 +20,9 @@ test('uncertain panel round-trips fail before any file mutation',()=>{
   assert.throws(()=>reconcilePanelIcml(base,native,['missing']));
   assert.throws(()=>reconcilePanelIcml('<!DOCTYPE test>'+base,native,[]));
 });
+test('panel reconciliation cannot silently discard style, destination or shared-format edits',()=>{
+  for(const bad of [native.replace('<CharacterStyleRange>','<CharacterStyleRange AppliedCharacterStyle="Bold">'),native.replace('<Story>','<Story TrackChanges="true">'),native.replace('<Br/>','</CharacterStyleRange><CharacterStyleRange><Br/>')])assert.throws(()=>reconcilePanelIcml(base,bad,['reference']),/formatting or structure/);
+  const second='<CrossReferenceSource Self="other" Name="protected" AppliedFormat="f"><Content id="4">Protected</Content></CrossReferenceSource>';
+  const before=base.replace('<Br/>',second+'<Br/>'), after=native.replace('<Br/>',second.replace(' id="4"','')+'<Br/>');
+  assert.throws(()=>reconcilePanelIcml(before,after,['reference']),/shared with an unselected/);
+});

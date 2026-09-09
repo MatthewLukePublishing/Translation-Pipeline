@@ -187,7 +187,7 @@ function buildAcronymSymbolsRuntime(workbookPath, targetLanguage = "") {
   }
   if (!languageColumns.length) throw new Error("Diagram acronym-symbol workbook has no target-language columns.");
 
-  const payload = {};
+  const payload = Object.create(null);
   for (let row = 1; row <= range.e.r; row += 1) {
     const english = clean(valueAt(row, 0));
     const englishDefinition = clean(valueAt(row, 1));
@@ -224,11 +224,12 @@ async function listAiFiles(dir) {
   if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) {
     throw new Error(`Diagram input folder does not exist: ${root}`);
   }
-  const matches = await fg(["**/*.ai"], {
+  const matches = await fg(["**/*.ai", "!**/*.codex-diagram-*.ai"], {
     cwd: root,
     absolute: true,
     onlyFiles: true,
     followSymbolicLinks: false,
+    caseSensitiveMatch: false,
   });
   return [...new Set(matches.map((filePath) => path.resolve(filePath)))]
     .sort((left, right) => left.localeCompare(right, "en"));

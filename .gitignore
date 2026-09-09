@@ -21,6 +21,8 @@ secrets*.json
 *.backup
 *.journal.json
 *.transaction.json
+*.runtime-transaction.json
+*.codex-*
 *.lock.json
 *.lock
 logs/

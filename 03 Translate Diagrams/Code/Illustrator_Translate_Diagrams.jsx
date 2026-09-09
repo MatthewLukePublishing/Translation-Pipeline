@@ -805,13 +805,6 @@ if (typeof JSON === "undefined") {
       lastErr = e2;
     }
 
-    try {
-      doc.save();
-      return;
-    } catch (e3) {
-      lastErr = e3;
-    }
-
     var msg = lastErr && lastErr.message ? lastErr.message : String(lastErr);
     throw new Error("Failed to save document to '" + filePath + "': " + msg);
   }
@@ -826,6 +819,7 @@ if (typeof JSON === "undefined") {
 
   var mode = getenv("AI_MODE", "process");
   var filePath = getenv("AI_BATCH_FILE", "");
+  var outputPath = getenv("AI_OUTPUT_FILE", "");
   var scanJsonPath = getenv("AI_SCAN_JSON", "");
   var translationJsonPath = getenv("AI_TRANSLATION_JSON", "");
   var startupJsonPath = getenv("AI_STARTUP_JSON", "");
@@ -839,7 +833,6 @@ if (typeof JSON === "undefined") {
   var symbolLanguage = getenv("AI_SYMBOL_LANGUAGE", targetLanguage);
   var waitTimeoutMs = Number(getenv("AI_WAIT_TIMEOUT_MS", "600000"));
   var waitPollMs = Number(getenv("AI_WAIT_POLL_MS", "500"));
-  var quitOnFinish = normalizeString(getenv("AI_QUIT_ON_FINISH", "1")) === "1";
 
   var newWordsJson = getenv("AI_NEW_WORDS_JSON", "");
   var newAcronymsJson = getenv("AI_NEW_ACRONYMS_JSON", "");
@@ -852,12 +845,14 @@ if (typeof JSON === "undefined") {
   var glossaryPairs = [];
   var doc = null;
 
-  try {
-    app.userInteractionLevel = UserInteractionLevel.DONTDISPLAYALERTS;
-  } catch (_) {}
+  var originalInteraction = app.userInteractionLevel;
 
   try {
     if (!filePath) throw new Error("AI_BATCH_FILE is missing.");
+    if (!outputPath || new File(outputPath).fsName.toLowerCase() === new File(filePath).fsName.toLowerCase()) throw new Error("A separate AI_OUTPUT_FILE is required; original diagrams are never saved in place by the worker.");
+    if (new File(outputPath).exists) throw new Error("Staged diagram output already exists.");
+    if (app.documents.length) throw new Error("Close existing Illustrator documents before starting an isolated diagram batch.");
+    app.userInteractionLevel = UserInteractionLevel.DONTDISPLAYALERTS;
     if (!scanJsonPath) throw new Error("AI_SCAN_JSON is missing.");
     if (!translationJsonPath) throw new Error("AI_TRANSLATION_JSON is missing.");
 
@@ -938,7 +933,7 @@ if (typeof JSON === "undefined") {
       throw new Error("One or more translations could not be applied cleanly.");
     }
 
-    saveDocumentToPath(doc, filePath);
+    saveDocumentToPath(doc, outputPath);
     doc.close(SaveOptions.DONOTSAVECHANGES);
     doc = null;
   } catch (err) {
@@ -956,8 +951,6 @@ if (typeof JSON === "undefined") {
     closeDocumentWithoutSaving(doc);
     throw err;
   } finally {
-    if (quitOnFinish) {
-      try { app.quit(); } catch (_) {}
-    }
+    app.userInteractionLevel = originalInteraction;
   }
 })();

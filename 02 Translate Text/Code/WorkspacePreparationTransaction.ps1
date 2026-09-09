@@ -18,7 +18,8 @@ function Test-WorkspacePreparationPathWithin {
 function Write-WorkspacePreparationJsonAtomic {
     param(
         [Parameter(Mandatory)] [string]$Path,
-        [Parameter(Mandatory)] $Value
+        [Parameter(Mandatory)] $Value,
+        [switch]$CreateNew
     )
     $fullPath = Get-WorkspacePreparationFullPath -Path $Path
     $parent = Split-Path -Parent $fullPath
@@ -34,7 +35,7 @@ function Write-WorkspacePreparationJsonAtomic {
         } finally {
             $stream.Dispose()
         }
-        [IO.File]::Move($temporary, $fullPath, $true)
+        [IO.File]::Move($temporary, $fullPath, (-not $CreateNew))
     } catch {
         $primaryError = $_
         try { [IO.File]::Delete($temporary) } catch { [void]$_.Exception }
@@ -52,6 +53,9 @@ function Read-WorkspacePreparationJournal {
     catch { throw "Invalid workspace-preparation transaction journal $fullPath`: $($_.Exception.Message)" }
     if ([int]$journal.schemaVersion -ne 1 -or -not [string]$journal.transactionId -or -not [string]$journal.phase) {
         throw "Unsupported workspace-preparation transaction journal: $fullPath"
+    }
+    if ([string]$journal.phase -notin @('planned', 'targets_initialized', 'preparing', 'committed')) {
+        throw "Invalid workspace-preparation transaction phase: $($journal.phase)"
     }
     return $journal
 }
@@ -118,7 +122,7 @@ function Start-WorkspacePreparationTransaction {
         activeJobInitiallyExisted = $activeInitiallyExisted
         activeJobInitialBase64 = $activeInitialBase64
     }
-    Write-WorkspacePreparationJsonAtomic -Path $fullJournalPath -Value $journal
+    Write-WorkspacePreparationJsonAtomic -Path $fullJournalPath -Value $journal -CreateNew
     return [pscustomobject]$journal
 }
 
@@ -146,6 +150,11 @@ function Initialize-WorkspacePreparationTargets {
         createdAt = [DateTime]::UtcNow.ToString('o')
     }
     foreach ($target in @([string]$journal.workspaceRoot, [string]$journal.jobPath)) {
+        if (Test-Path -LiteralPath $target) { throw "Workspace-preparation target appeared after planning: $target" }
+        Assert-WorkspacePreparationNoRedirect -Path $target
+    }
+    foreach ($target in @([string]$journal.workspaceRoot, [string]$journal.jobPath)) {
+        if (Test-Path -LiteralPath $target) { throw "Workspace-preparation target appeared after planning: $target" }
         [IO.Directory]::CreateDirectory($target) | Out-Null
         $markerPath = Join-Path $target $script:WorkspacePreparationMarkerName
         if (Test-Path -LiteralPath $markerPath) { throw "Workspace-preparation marker already exists: $markerPath" }
@@ -160,7 +169,9 @@ function Test-WorkspacePreparationOwnedTarget {
         [Parameter(Mandatory)] [string]$TargetPath,
         [Parameter(Mandatory)] [string]$TransactionId
     )
-    if (-not (Test-Path -LiteralPath $TargetPath -PathType Container)) { return $true }
+    Assert-WorkspacePreparationNoRedirect -Path $TargetPath
+    if (-not (Test-Path -LiteralPath $TargetPath)) { return $true }
+    if (-not (Test-Path -LiteralPath $TargetPath -PathType Container)) { return $false }
     $markerPath = Join-Path $TargetPath $script:WorkspacePreparationMarkerName
     if (Test-Path -LiteralPath $markerPath -PathType Leaf) {
         try { $marker = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json }
@@ -170,11 +181,41 @@ function Test-WorkspacePreparationOwnedTarget {
     return @(Get-ChildItem -LiteralPath $TargetPath -Force).Count -eq 0
 }
 
+function Assert-WorkspacePreparationNoRedirect {
+    param([Parameter(Mandatory)] [string]$Path)
+    $current = Get-WorkspacePreparationFullPath -Path $Path
+    while ($current) {
+        if (Test-Path -LiteralPath $current) {
+            $item = Get-Item -LiteralPath $current -Force
+            if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Redirected workspace-preparation path: $current" }
+        }
+        $parent = [IO.Path]::GetDirectoryName($current)
+        if ($parent -eq $current) { break }
+        $current = $parent
+    }
+}
+
+function Assert-WorkspacePreparationActiveJob {
+    param([Parameter(Mandatory)] $Journal, [Parameter(Mandatory)] [string]$ActiveJobPath)
+    Assert-WorkspacePreparationNoRedirect -Path $ActiveJobPath
+    if (-not (Test-Path -LiteralPath $ActiveJobPath)) { return }
+    if ([bool]$Journal.activeJobInitiallyExisted -and
+        [Convert]::ToBase64String([IO.File]::ReadAllBytes($ActiveJobPath)) -ceq [string]$Journal.activeJobInitialBase64) { return }
+    try { $active = Get-Content -LiteralPath $ActiveJobPath -Raw | ConvertFrom-Json }
+    catch { throw "Cannot safely recover an unreadable active-job file: $ActiveJobPath" }
+    if (-not [string]$active.jobPath -or -not [string]::Equals(
+        (Get-WorkspacePreparationFullPath -Path ([string]$active.jobPath)),
+        (Get-WorkspacePreparationFullPath -Path ([string]$Journal.jobPath)), [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Active-job file belongs to another job; all recovery targets retained: $ActiveJobPath"
+    }
+}
+
 function Restore-WorkspacePreparationActiveJob {
     param(
         [Parameter(Mandatory)] $Journal,
         [Parameter(Mandatory)] [string]$ActiveJobPath
     )
+    Assert-WorkspacePreparationActiveJob -Journal $Journal -ActiveJobPath $ActiveJobPath
     if ([bool]$Journal.activeJobInitiallyExisted) {
         $bytes = [Convert]::FromBase64String([string]$Journal.activeJobInitialBase64)
         $temporary = '{0}.restore-{1}-{2}' -f $ActiveJobPath, $PID, ([Guid]::NewGuid().ToString('N'))
@@ -210,12 +251,22 @@ function Recover-WorkspacePreparationTransaction {
         return [pscustomobject]@{ Recovered = $false; Phase = 'none'; TransactionId = '' }
     }
     $journal = Read-WorkspacePreparationJournal -JournalPath $JournalPath
+    Assert-WorkspacePreparationNoRedirect -Path $JournalPath
     $targets = Assert-WorkspacePreparationJournalTargets `
         -Journal $journal `
         -AllowedWorkspaceParent $AllowedWorkspaceParent `
         -AllowedJobsRoot $AllowedJobsRoot `
         -ExpectedActiveJobPath $ExpectedActiveJobPath
 
+    # Preflight every target before restoring the pointer or deleting any tree.
+    foreach ($target in @($targets.WorkspaceRoot, $targets.JobPath)) {
+        Assert-WorkspacePreparationNoRedirect -Path $target
+        $markerPath = Join-Path $target $script:WorkspacePreparationMarkerName
+        if (([string]$journal.phase -ne 'committed' -or (Test-Path -LiteralPath $markerPath)) -and
+            -not (Test-WorkspacePreparationOwnedTarget -TargetPath $target -TransactionId ([string]$journal.transactionId))) {
+            throw "Refusing recovery without the matching ownership marker: $target"
+        }
+    }
     if ([string]$journal.phase -eq 'committed') {
         foreach ($target in @($targets.WorkspaceRoot, $targets.JobPath)) {
             $markerPath = Join-Path $target $script:WorkspacePreparationMarkerName
@@ -227,6 +278,7 @@ function Recover-WorkspacePreparationTransaction {
         return [pscustomobject]@{ Recovered = $true; Phase = 'committed-cleanup'; TransactionId = [string]$journal.transactionId }
     }
 
+    Assert-WorkspacePreparationActiveJob -Journal $journal -ActiveJobPath $targets.ActiveJobPath
     Restore-WorkspacePreparationActiveJob -Journal $journal -ActiveJobPath $targets.ActiveJobPath
     foreach ($target in @($targets.JobPath, $targets.WorkspaceRoot)) {
         if (-not (Test-WorkspacePreparationOwnedTarget -TargetPath $target -TransactionId ([string]$journal.transactionId))) {
@@ -240,6 +292,12 @@ function Recover-WorkspacePreparationTransaction {
 
 function Complete-WorkspacePreparationTransaction {
     param([Parameter(Mandatory)] [string]$JournalPath)
+    $pending = Read-WorkspacePreparationJournal -JournalPath $JournalPath
+    foreach ($target in @([string]$pending.workspaceRoot, [string]$pending.jobPath)) {
+        if (-not (Test-WorkspacePreparationOwnedTarget -TargetPath $target -TransactionId ([string]$pending.transactionId))) {
+            throw "Workspace-preparation ownership changed before commit: $target"
+        }
+    }
     $journal = Set-WorkspacePreparationTransactionPhase -JournalPath $JournalPath -Phase 'committed'
     $cleanupErrors = @()
     foreach ($target in @([string]$journal.workspaceRoot, [string]$journal.jobPath)) {
@@ -251,8 +309,10 @@ function Complete-WorkspacePreparationTransaction {
         }
         catch { $cleanupErrors += $_.Exception.Message }
     }
-    try { Remove-Item -LiteralPath $JournalPath -Force }
-    catch { $cleanupErrors += $_.Exception.Message }
+    if (-not $cleanupErrors.Count) {
+        try { Remove-Item -LiteralPath $JournalPath -Force }
+        catch { $cleanupErrors += $_.Exception.Message }
+    }
     if ($cleanupErrors.Count) {
         Write-Warning (
             'Workspace preparation committed; cleanup is deferred to the next run: ' +

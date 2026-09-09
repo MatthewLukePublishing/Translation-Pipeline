@@ -13,16 +13,15 @@
  *    - Illustrator scans Open Sans / Source Code Pro runs and writes scan JSON
  *    - Node makes one ChatGPT-authenticated Codex subscription query per diagram
  *    - Node writes translation JSON
- *    - Illustrator applies translations, saves, and closes
- * 5. If a file fails:
- *    - Node kills Illustrator
- *    - relaunches the persistent controller
- *    - retries that file once
- * 6. Batch continues past failures
+ *    - Illustrator saves a separate staged file and closes its owned document
+ *    - Node publishes it transactionally if the original is unchanged
+ * 5. Any failure stops the batch without killing Illustrator or retrying a save
+ * 6. Staged output and diagnostics remain available for recovery
  * 7. Failures are logged to a .txt file
  */
 
 const fs = require("fs");
+const { prepareDiagramPublication, publishDiagram } = require("./DiagramPublication.cjs");
 const editorialRules = require("../../Code/TranslationEditorialRules.cjs");
 const path = require("path");
 const os = require("os");
@@ -59,7 +58,7 @@ const WAIT_TIMEOUT_MS = 10 * 60 * 1000;
 const WAIT_POLL_MS = 500;
 const STARTUP_TIMEOUT_MS = 30 * 1000;
 const CONTROLLER_READY_TIMEOUT_MS = 2 * 60 * 1000;
-const ILLUSTRATOR_RETRY_LIMIT = 2;
+const WORKER_TRANSLATION_WAIT_MS = (CODEX_QUERY_TIMEOUT_MS + 120000) * MAX_SUBSCRIPTION_RETRIES;
 
 const OPEN_SANS_MATCHES = [
   "open sans",
@@ -398,24 +397,6 @@ function tryReadJson(filePath) {
   }
 }
 
-function terminateChildProcess(child) {
-  if (!child || child.killed) return;
-
-  try {
-    if (process.platform === "win32" && child.pid) {
-      spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], {
-        windowsHide: true,
-        stdio: "ignore",
-      });
-      return;
-    }
-  } catch { /* Fall through to the portable SIGTERM path. */ }
-
-  try {
-    child.kill("SIGTERM");
-  } catch { /* Process may already have exited. */ }
-}
-
 function makeFailureLogPath(tempRoot) {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   return path.join(tempRoot, `Illustrator_Translate_Diagrams_Batch.failures.${stamp}.txt`);
@@ -742,8 +723,7 @@ async function translateDiagramOnce(scanPayload, statePaths) {
         timeoutMs: CODEX_QUERY_TIMEOUT_MS,
       });
       if (run.status !== 0) {
-        const diagnostics = `${run.stdout || ""}\n${run.stderr || ""}`.slice(-12000);
-        throw new Error(`Codex subscription query exited with code ${run.status}.\n${diagnostics}`);
+        throw new Error(`Codex subscription query exited with code ${run.status}. Raw process output is withheld because it may contain authentication details.`);
       }
       const parsed = readJson(statePaths.codexResponseJson);
       validateTranslations(scanPayload, parsed);
@@ -885,7 +865,7 @@ function launchIllustratorControllerAsync(illustratorExe, controllerJsxPath, env
     });
   });
 
-  // Always observe the rejection so a non-zero exit (e.g. taskkill during
+  // Always observe the rejection so an unexpected application exit during
   // retry, or Illustrator crashing) never becomes an unhandled rejection
   // that crashes the Node process. State is tracked via `state.exited`.
   completion.catch(() => {});
@@ -1062,6 +1042,7 @@ if (typeof JSON === "undefined") {
 
   try {
     clearSessionError();
+    if (app.documents.length) throw new Error("Close existing Illustrator documents before starting an isolated diagram batch.");
     writeJson(${JSON.stringify(readyJson)}, {
       ready: true,
       ts: new Date().toUTCString(),
@@ -1190,7 +1171,7 @@ async function startIllustratorSession({
 
   const launch = launchIllustratorControllerAsync(illustratorExe, controllerJsxPath, {});
 
-  await waitForSignalFile({
+  try { await waitForSignalFile({
     filePath: readyJson,
     timeoutMs: CONTROLLER_READY_TIMEOUT_MS,
     illustratorState: launch.state,
@@ -1198,7 +1179,10 @@ async function startIllustratorSession({
     stageLabel: "controller startup",
     onTimeoutMessage:
       "Illustrator launched but the persistent controller did not report ready."
-  });
+  }); } catch (error) {
+    try { writeJson(stopJson, { stop: true }); } finally { launch.child.unref(); }
+    throw error;
+  }
 
   return launch;
 }
@@ -1290,10 +1274,12 @@ async function processFileInSession({
   if (!fs.existsSync(aiFile)) {
     throw new Error(`Source .ai file does not exist on disk: ${aiFile}`);
   }
+  const publication = prepareDiagramPublication(aiFile);
 
   const envVars = {
     AI_MODE: "process",
     AI_BATCH_FILE: aiFile,
+    AI_OUTPUT_FILE: publication.outputPath,
     AI_SCAN_JSON: perFile.scanJson,
     AI_TRANSLATION_JSON: perFile.translateJson,
     AI_STARTUP_JSON: perFile.startupJson,
@@ -1306,7 +1292,7 @@ async function processFileInSession({
     AI_NEW_WORDS_JSON: GLOSSARY_RESOURCES.wordsJson,
     AI_NEW_ACRONYMS_JSON: GLOSSARY_RESOURCES.acronymsJson,
     AI_NEW_ACRONYMS_SYMBOLS_JSON: GLOSSARY_RESOURCES.symbolsJson,
-    AI_WAIT_TIMEOUT_MS: String(WAIT_TIMEOUT_MS),
+    AI_WAIT_TIMEOUT_MS: String(WORKER_TRANSLATION_WAIT_MS),
     AI_WAIT_POLL_MS: String(WAIT_POLL_MS),
     AI_QUIT_ON_FINISH: "0",
   };
@@ -1361,6 +1347,9 @@ async function processFileInSession({
       aiFile,
     });
 
+    const finalModelResolution = await resolveSubscriptionModel(MODEL);
+    writeJson(`${perFile.translateJson}.publication.json`, { publication, finalModelResolution });
+    publishDiagram(publication);
     console.log("Done.");
     return;
   }
@@ -1369,6 +1358,7 @@ async function processFileInSession({
 
   const translationPayload = await translateDiagramOnce(scanData, perFile);
   const finalPayload = sortTranslationsLikeRuns(scanData, translationPayload);
+  await resolveSubscriptionModel(MODEL);
 
   writeJson(perFile.translateJson, finalPayload);
 
@@ -1391,118 +1381,43 @@ async function processFileInSession({
     }
   }
 
+  const finalModelResolution = await resolveSubscriptionModel(MODEL);
+  writeJson(`${perFile.translateJson}.publication.json`, { publication, finalModelResolution });
+  publishDiagram(publication);
   console.log("Done.");
 }
 
 async function processFileWithRetry({
-  aiFile,
-  illustratorExe,
-  jsxWorker,
-  sessionPaths,
-  getSession,
-  setSession,
-  tempRoot,
-  failureLogPath,
-  index,
-  total,
+  aiFile, illustratorExe, jsxWorker, sessionPaths, getSession, setSession,
+  tempRoot, failureLogPath, index, total,
 }) {
-  let lastErr = null;
-
-  for (let attempt = 1; attempt <= ILLUSTRATOR_RETRY_LIMIT; attempt++) {
-    let session = getSession();
-
-    try {
-      if (!session || session.state.exited) {
-        session = await startIllustratorSession({
-          illustratorExe,
-          controllerJsxPath: sessionPaths.controllerJsxPath,
-          jobsDir: sessionPaths.jobsDir,
-          jsxWorker,
-          readyJson: sessionPaths.readyJson,
-          stopJson: sessionPaths.stopJson,
-          sessionErrorJson: sessionPaths.sessionErrorJson,
-        });
-        setSession(session);
-      }
-
-      await processFileInSession({
-        aiFile,
-        illustratorState: session.state,
-        jobsDir: sessionPaths.jobsDir,
-        tempRoot,
-        sessionErrorJson: sessionPaths.sessionErrorJson,
+  let session = getSession();
+  try {
+    if (!session || session.state.exited) {
+      session = await startIllustratorSession({
+        illustratorExe, controllerJsxPath: sessionPaths.controllerJsxPath,
+        jobsDir: sessionPaths.jobsDir, jsxWorker, readyJson: sessionPaths.readyJson,
+        stopJson: sessionPaths.stopJson, sessionErrorJson: sessionPaths.sessionErrorJson,
       });
-
-      return true;
-    } catch (err) {
-      lastErr = err;
-
-      if (err?.code === "LATEST_MODEL_POLICY_FAILURE") throw err;
-
-      // If the source .ai file is genuinely missing on disk, retrying with
-      // a fresh Illustrator session won't help — and tearing down a healthy
-      // session would corrupt the batch. Log and move on without relaunch.
-      if (!fs.existsSync(aiFile)) {
-        appendFailureLog(failureLogPath, [
-          `[${index + 1}/${total}] FAILED (file missing on disk)`,
-          `File: ${aiFile}`,
-          `Attempts: ${attempt}`,
-          `Time: ${new Date().toISOString()}`,
-          `Error: ${err && err.stack ? err.stack : String(err)}`,
-          ""
-        ]);
-        console.error(`Source file missing, skipping without relaunch: ${aiFile}`);
-        return false;
-      }
-
-      if (attempt < ILLUSTRATOR_RETRY_LIMIT) {
-        console.warn(`Retrying after Illustrator relaunch (${attempt}/${ILLUSTRATOR_RETRY_LIMIT - 1} retry used): ${err.message}`);
-
-        const current = getSession();
-        if (current && current.child) {
-          terminateChildProcess(current.child);
-        }
-        setSession(null);
-
-        await sleep(1500);
-
-        try {
-          const relaunched = await startIllustratorSession({
-            illustratorExe,
-            controllerJsxPath: sessionPaths.controllerJsxPath,
-            jobsDir: sessionPaths.jobsDir,
-            jsxWorker,
-            readyJson: sessionPaths.readyJson,
-            stopJson: sessionPaths.stopJson,
-            sessionErrorJson: sessionPaths.sessionErrorJson,
-          });
-          setSession(relaunched);
-        } catch (relaunchErr) {
-          lastErr = new Error(
-            `Original file failure: ${err.message}\nRelaunch failure: ${relaunchErr.message}`
-          );
-        }
-
-        continue;
-      }
-
-      appendFailureLog(failureLogPath, [
-        `[${index + 1}/${total}] FAILED`,
-        `File: ${aiFile}`,
-        `Attempts: ${attempt}`,
-        `Time: ${new Date().toISOString()}`,
-        `Error: ${lastErr && lastErr.stack ? lastErr.stack : String(lastErr)}`,
-        ""
-      ]);
-
-      console.error(`Failed and continuing: ${aiFile}`);
-      console.error(lastErr);
-
-      return false;
+      setSession(session);
     }
+    await processFileInSession({ aiFile, illustratorState: session.state,
+      jobsDir: sessionPaths.jobsDir, tempRoot, sessionErrorJson: sessionPaths.sessionErrorJson });
+    return true;
+  } catch (err) {
+    // Never kill a shared Adobe process or retry an uncertain save. Signal the
+    // owned worker, retain its staged output, and stop the entire batch.
+    if (aiFile && tempRoot) {
+      const perFile = makePerFilePaths(tempRoot, makeTempStem(aiFile));
+      writeJson(perFile.errorJson, { message: "Batch aborted; do not publish the staged diagram." });
+    }
+    if (err?.code === "LATEST_MODEL_POLICY_FAILURE") throw err;
+    appendFailureLog(failureLogPath, [
+      `[${index + 1}/${total}] FAILED; batch stopped without retry`,
+      `File: ${aiFile}`, `Error: ${err.message}`,
+    ]);
+    throw err;
   }
-
-  return false;
 }
 
 async function main() {
@@ -1574,8 +1489,7 @@ async function main() {
     return;
   }
 
-  const tempRoot = path.join(os.tmpdir(), "ai-open-sans-translate");
-  ensureDir(tempRoot);
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ai-open-sans-translate-"));
   const resourceDir = path.join(tempRoot, "resources");
   ensureDir(resourceDir);
   GLOSSARY_RESOURCES.symbolsJson = path.join(resourceDir, "diagram-acronym-symbols.json");
@@ -1678,9 +1592,8 @@ async function main() {
         sleep(5000)
       ]);
 
-      if (!session.state.exited) {
-        terminateChildProcess(session.child);
-      }
+      // Stop our controller without terminating the user's desktop application.
+      session.child.unref();
     }
   }
 }

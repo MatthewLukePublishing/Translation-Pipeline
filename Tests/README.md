@@ -25,3 +25,11 @@ native-GREP utility has separate safety mocks. Offline execution is never
 reported as native Adobe execution.
 
 The suite does not use private workbooks, network access, credentials, paid services, model queries, Microsoft Office, InDesign, or Illustrator.
+
+The runner discovers all public `*.test.cjs`, `*.test.mjs`, and `*.test.js` files,
+including new untracked tests, while excluding Git-ignored private audits.
+Publication regressions exercise changed-input refusal, hash-checked recovery,
+missing-backup conflicts, whole-set rollback, atomic glossary runtime pairs,
+Unicode caption breaks, read-only check modes, diagram staging, and stop-without-
+relaunch behavior. Workspace tests cover foreign active pointers and ownership
+markers before any destructive recovery action.

@@ -13,6 +13,7 @@ const BINARY_EXTENSIONS = new Set([
   ".indd", ".pdf", ".psd", ".rar", ".tsv", ".xls", ".xlsb", ".xlsm", ".xlsx", ".zip",
 ]);
 const PRIVATE_PATHS = [
+  /\.codex-|\.runtime-transaction\.json$/i,
   /^_Archive\//i,
   /^PROJECT\.md$/i,
   /^Future Languages\.txt$/i,
@@ -39,6 +40,15 @@ function trackedFiles() {
 function textFile(buffer) {
   return !buffer.includes(0);
 }
+
+test("maintained code never calls the dependency's vulnerable disk-extraction methods", () => {
+  for (const relativePath of trackedFiles()) {
+    if (relativePath.startsWith("Tests/") || !/\.(?:js|cjs|mjs)$/.test(relativePath)) continue;
+    const source = fs.readFileSync(path.join(ROOT, relativePath), "utf8");
+    assert.ok(!/\.(?:extractAllTo(?:Async)?|extractEntryTo)\s*\(/.test(source),
+      `Unsafe ZIP extraction method in ${relativePath}; use a reviewed bounded path-safe writer instead.`);
+  }
+});
 
 test("the public commit contains only maintained source and synthetic examples", () => {
   const files = trackedFiles();

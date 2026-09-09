@@ -166,7 +166,9 @@ If either live request, metadata validation, authentication, or `xhigh` support 
 
 Production editions are self-contained beneath the configured book `Interiors` folder. Administrative job state is stored under `02 Translate Text/Jobs`; the current pointer is `02 Translate Text/Active Job.json`. Generated workbooks, reports, model state, diagram logs, and caption outputs remain local and are ignored by Git.
 
-Workspace preparation, ICML import, caption completion, and job archival use transaction journals. On the next run, an interrupted operation either rolls back its owned partial changes or resumes from a validated committed state. Source packages and existing production editions are not overwritten merely because a new job is prepared.
+Workspace preparation, glossary runtime publication, ICML import, caption completion, diagram publication, and job archival use recoverable transactions. File-set recovery checks the entire set's original and replacement hashes before changing anything. Conflicting edits, missing required backups, a live transaction owner, or older journals without hashes stop recovery and retain the evidence for manual reconciliation. Source packages and existing production editions are not overwritten merely because a new job is prepared.
+
+Keep input workbooks and job configuration closed to edits during translation. Text and caption publication refuse changed inputs/outputs rather than overwrite newer work. Readiness checks are read-only and refuse pending recovery journals. See [the code review](CODE_REVIEW.md) for the v1.3.1 corrections and validation limits.
 
 ## Troubleshooting
 
@@ -178,7 +180,7 @@ Workspace preparation, ICML import, caption completion, and job archival use tra
 - **Workbook fails QA:** keep columns A and C unchanged, remove formulas and Excel error cells, and rerun `-Action Validate`. A workbook changed after import must be reimported.
 - **Import is stale:** restore the exact QA-passed workbook and ICML snapshot, or validate and import the authorized new revision.
 - **Adobe step will not start:** save and close unrelated Adobe documents, confirm the configured document and asset paths, then retry the same action. Never run concurrent InDesign operations.
-- **Interrupted multi-file operation:** rerun the same action. Do not manually delete its journal or backup files unless you have independently verified the transaction state.
+- **Interrupted multi-file operation:** after the original process has stopped, rerun the same action. If recovery reports a conflict or a legacy journal, compare the retained originals, staged replacements and current files before explicitly choosing what to restore. Never delete the journal or backups to bypass the safety check.
 
 ## Repository safety
 

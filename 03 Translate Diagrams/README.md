@@ -14,6 +14,16 @@ do not create or edit artwork merely to satisfy the pipeline sequence.
 
 Run from the repository root:
 
+Save and close existing Illustrator documents first. Each run uses separate
+coordination files. The worker opens the original but saves only a new sibling
+`*.codex-diagram-*.ai` staging file. After the worker closes it, the controller
+rechecks the frontier and publishes through a hash-guarded file transaction.
+Staging files are excluded from discovery. Any failure stops the batch; the
+controller does not force-kill Illustrator or automatically retry an uncertain
+save. An interrupted publication journal or staged output must be reconciled
+before retrying that file. Keep its recovery evidence until the intended version
+has been verified. Native Illustrator rendering still requires a desktop check.
+
 ```powershell
 node '.\03 Translate Diagrams\Code\Illustrator_Translate_Diagrams_Batch.cjs'
 ```

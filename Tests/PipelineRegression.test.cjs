@@ -35,10 +35,12 @@ test("Stage 3 discovers diagrams recursively and resolves canonical glossary res
     fs.mkdirSync(nested, { recursive: true });
     fs.writeFileSync(path.join(folder, "root.ai"), "fixture", "utf8");
     fs.writeFileSync(path.join(nested, "nested.ai"), "fixture", "utf8");
+    fs.writeFileSync(path.join(nested, "upper.AI"), "fixture", "utf8");
     fs.writeFileSync(path.join(nested, "ignored.ai.txt"), "fixture", "utf8");
     const files = await diagramResources.listAiFiles(folder);
     assert.deepEqual(files.map((filePath) => path.relative(folder, filePath).replace(/\\/g, "/")), [
       "nested/deeper/nested.ai",
+      "nested/deeper/upper.AI",
       "root.ai",
     ]);
 
@@ -329,6 +331,14 @@ test("offline ICML import runs GREP across segments, preserves BOM, refuses lock
     assert.equal(manifest.import.grep.files[1].records.every(r=>r.changes===0),true);
     assert.equal(fs.existsSync(path.join(job,"state/content_import_transaction.json")),false);
     const verified = run("IcmlGrepJob.mjs"); assert.equal(verified.status,0,verified.stderr);
+    const configFile=path.join(job,"job_config.json"), config=JSON.parse(fs.readFileSync(configFile));
+    config.protectedSourceRules={ paragraphStyleName:"ReviewProtected" };
+    fs.writeFileSync(configFile,JSON.stringify(config));
+    const protectionQa=run("Validation/Validate_Translation_Job.js"); assert.equal(protectionQa.status,0,protectionQa.stderr);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(job,"job_manifest.json"))).status,"ready_for_import","a changed protection scope must invalidate the import even with identical workbook bytes");
+    assert.equal(run("Import_Translation_Workbook.mjs").status,0);
+    delete config.protectedSourceRules;
+    fs.writeFileSync(configFile,JSON.stringify(config));
     // Existing jobs can acquire the new evidence without manual manifest resets.
     delete manifest.import.grep;
     fs.writeFileSync(path.join(job,"job_manifest.json"),JSON.stringify(manifest));

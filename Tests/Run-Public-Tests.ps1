@@ -32,22 +32,10 @@ foreach ($script in $powerShellScripts) {
     }
 }
 
-$contractTests = @(
-    'SharedContracts.test.cjs'
-    'TranslationEditorialRules.test.cjs'
-    'EditorialLayoutRules.test.cjs'
-    'EditorialNativeVariables.test.cjs'
-    'TranslationGrepRules.test.cjs'
-    'IcmlGrep.test.cjs'
-    'PanelManagedReferences.test.mjs'
-    'PanelIcmlRoundTrip.test.cjs'
-    'NativeGrepSafety.test.cjs'
-    'LiveModelPolicy.test.cjs'
-    'SourcePackage.test.cjs'
-    'InDesignLifecycle.test.cjs'
-    'PipelineRegression.test.cjs'
-    'PublicDistribution.test.cjs'
-) | ForEach-Object { Join-Path $PSScriptRoot $_ }
+$publicTestPaths = & git -C $root ls-files --cached --others --exclude-standard -- Tests
+if ($LASTEXITCODE -ne 0) { throw 'Could not inventory public tests.' }
+$contractTests = @($publicTestPaths | Where-Object { $_ -match '\.test\.(?:cjs|mjs|js)$' } |
+    Sort-Object -Unique | ForEach-Object { Join-Path $root $_ })
 & $node --test $contractTests
 if ($LASTEXITCODE -ne 0) { throw 'Public Node contract tests failed.' }
 

@@ -1,7 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const XLSX = require("xlsx");
-const { writeJsonAtomicSync } = require("../../../Code/AtomicFiles.cjs");
+const { commitFileSetWithJournalSync, recoverFileSetJournalSync } = require("../../../Code/TransactionalFileReplacement.cjs");
 const { readJsonFile: readJson } = require("../../../Code/FileUtilities.cjs");
 const { resolveGlossaryProgramPath } = require("./GlossaryProgramPath.cjs");
 const { editorialPrompt } = require("../../../Code/TranslationEditorialRules.cjs");
@@ -132,11 +132,6 @@ function assertAllowedCaseFoldCollisions(map, familyName, collisions) {
   }
 }
 
-function writeJson(filePath, value) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  writeJsonAtomicSync(filePath, value, { trailingNewline: true });
-}
-
 function uniqueFamilies(config) {
   const byFamily = new Map();
   for (const [book, bookConfig] of Object.entries(config.books || {})) {
@@ -157,6 +152,9 @@ function uniqueFamilies(config) {
 async function buildFamily(map, familyName, familyConfig, checkOnly) {
   const workbookPath = assertWithinProgram(familyConfig.authoringWorkbook, `${familyName} authoring workbook`);
   if (!fs.existsSync(workbookPath)) throw new Error(`Missing authoring workbook: ${workbookPath}`);
+  const journalPath = `${workbookPath}.runtime-transaction.json`;
+  if (checkOnly && fs.existsSync(journalPath)) throw new Error("Glossary check is read-only; recover the pending runtime transaction with a normal build first.");
+  if (!checkOnly) recoverFileSetJournalSync(journalPath);
 
   const workbook = XLSX.readFile(workbookPath, { cellFormula: true, cellText: false, cellDates: false });
   inspectWorkbook(workbook, workbookPath, [map.sheets.acronyms, map.sheets.words]);
@@ -169,6 +167,7 @@ async function buildFamily(map, familyName, familyConfig, checkOnly) {
     ["words", words],
   ];
 
+  const replacements = [];
   for (const [kind, payload] of outputs) {
     const outputPath = assertWithinProgram(familyConfig.runtime[kind], `${familyName} ${kind} runtime`);
     const expected = `${JSON.stringify(payload, null, 2)}\n`;
@@ -179,9 +178,11 @@ async function buildFamily(map, familyName, familyConfig, checkOnly) {
         throw new Error(`${familyName} ${kind}.json is stale; rebuild it from Glossary.xlsx.`);
       }
     } else {
-      writeJson(outputPath, payload);
+      if (path.resolve(outputPath).toLowerCase() === workbookPath.toLowerCase()) throw new Error("Runtime output cannot overwrite the authoring workbook.");
+      replacements.push({ filePath: outputPath, data: expected, options: "utf8" });
     }
   }
+  if (!checkOnly) commitFileSetWithJournalSync(journalPath, replacements);
 
   console.log(
     `${checkOnly ? "GLOSSARY_CURRENT" : "GLOSSARY_BUILT"}|family=${familyName}|acronyms=${Object.keys(acronyms).length}|words=${Object.keys(words).length}|caseFoldAmbiguities=${collisions.length}|workbook=${workbookPath}`,
@@ -214,7 +215,8 @@ async function main() {
   }
 }
 
-main().catch((error) => {
+if (require.main === module) main().catch((error) => {
   console.error(`GLOSSARY_BUILD_FAILED|${error.message}`);
   process.exitCode = 1;
 });
+module.exports = { buildFamily };

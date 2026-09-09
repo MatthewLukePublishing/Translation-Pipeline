@@ -140,6 +140,35 @@ translation does not reorder existing artwork or rebuild a TOC automatically.
 Preserved style ranges retain bold emphasis and italic variables. The final layout
 report identifies the automated checks separately from this retained workflow guidance.
 
+### Spanish editorial coverage
+
+Policy 1.1.0 incorporates generalized Spanish review corrections for every book,
+not page-specific replacements. Stage-filtered Spanish rules cover `Imagen` labels
+and translated running/chapter headings, full U.S. state names in narrative
+captions, consistent first-level guillemets with nesting exceptions, superscript
+ordinal endings (`1.ᵉʳ`, `3.ᵉʳ`), lowercase common terms, sentence spacing and
+sentence-final periods after closing parentheses. Four-digit quantities stay
+ungrouped; five or more digits use nonbreaking space groups. Source-aware review
+distinguishes decimal commas from English thousands separators; there is no
+blanket numeric, abbreviation, capitalization or punctuation replacement.
+The numeric and ordinal guidance references FundéuRAE in the policy source list.
+
+Existing full-month dates, metric-first measurements, NBSP before `%`, and
+panel-encoded `Ver` references remain authoritative. Spanish text postprocessing
+now also expands abbreviated dates without `de` (such as `26 feb 2026`) before
+workbook export, and QA rejects that unnormalized form. Language-specific
+instructions reach primary translation and targeted rechecks through the same
+prompt builder; heading coverage is also retained in layout-review guidance.
+Contextual language rules are review instructions, not deterministic QA claims.
+The ICML GREP pass remains spacing-only and never rewrites generated references.
+
+Protected credits, approved glossary strings and official designations remain
+unchanged. Missing source headings or a conflict with protected content require
+scoped review. New jobs use the revised policy; existing jobs cannot silently
+reuse stale policy evidence. Updating the program alone does not rewrite any
+accepted workbook, ICML or InDesign file. Stage 4 remains Portuguese-only; its
+target-language scope has not been expanded by these Spanish rules.
+
 Before a panel edit, retain one verified INDD recovery copy in the private job
 state. Do not discard unsaved Adobe work or delete recovery evidence during an
 interruption. Unknown layout styles/formats fail closed instead of being guessed.

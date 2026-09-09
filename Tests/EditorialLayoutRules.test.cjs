@@ -50,3 +50,22 @@ test("incomplete, mixed-protection and unknown format inventories fail closed",(
     assert.throws(()=>planEditorialLayout(audit,"French",["Credits"]));
   }
 });
+
+test("Spanish Ver corrections remain panel-encoded and running headings remain review guidance",()=>{
+  const audit=fixture(),plan=planEditorialLayout(audit,"Spanish",["Credits"]);
+  assert.equal(plan.applicationMethod,"cross_reference_panel_encoder");
+  assert.equal(plan.formatEdits[0].definition,'(Ver <paraText />, pág.^S<pageNum />)');
+  assert.deepEqual(plan.protectedReferenceIds,["11"]);
+  assert.ok(plan.retainedLayoutRules.some(rule=>rule.id==="es_labels_and_headings"));
+  assert.ok(!plan.retainedLayoutRules.some(rule=>rule.id==="es_caption_locations"));
+  for(const row of audit.records.filter(row=>row.kind==="BLOCK" && row.formatId==="1")){
+    row.customText=plan.formatEdits[0].blocks[Number(row.index)].customText||"";
+  }
+  const reference=audit.records.find(row=>row.kind==="REFERENCE" && row.id==="10");
+  reference.text="(Véase Título, pág.\u00A02)";
+  const stale=planEditorialLayout(audit,"Spanish",["Credits"]);
+  assert.equal(stale.formatEdits.length,0);
+  assert.deepEqual(stale.referenceUpdates,[{id:"10",formatId:"1"}]);
+  reference.text="(Ver Título, pág.\u00A02)";
+  assert.equal(planEditorialLayout(audit,"Spanish",["Credits"]).referenceUpdates.length,0);
+});

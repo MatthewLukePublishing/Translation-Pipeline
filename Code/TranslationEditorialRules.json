@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "sourceWorkbook": "Translation Rules.xlsx",
   "scope": "English source plus nine target languages. House style is applied only where linguistically and technically applicable.",
   "precedence": [
@@ -34,6 +34,26 @@
       "id": "es",
       "title": "FundéuRAE: percentage notation",
       "url": "https://www.fundeu.es/recomendacion/porcentajes-claves-de-redaccion/"
+    },
+    {
+      "id": "es_review",
+      "title": "User-supplied Spanish translation corrections",
+      "reference": "Generalized editorial rules for all books; no book-specific terminology or page edits."
+    },
+    {
+      "id": "es_numbers",
+      "title": "FundéuRAE: miles y millones, claves de escritura",
+      "url": "https://www.fundeu.es/recomendacion/miles-y-millones-claves-de-escritura/"
+    },
+    {
+      "id": "es_percent",
+      "title": "RAE: space before the percentage symbol",
+      "url": "https://www.rae.es/duda-linguistica/el-simbolo-del-porcentaje-se-escribe-pegado-la-cifra"
+    },
+    {
+      "id": "es_ordinals",
+      "title": "FundéuRAE: números ordinales, claves de escritura",
+      "url": "https://www.fundeu.es/recomendacion/numero-ordinales-claves-de-escritura/"
     },
     {
       "id": "nl",
@@ -365,12 +385,68 @@
       "grouping": " ",
       "percentExample": "5 %",
       "quotes": "«texto»",
-      "capitalization": "Use sentence case for headings, preserving official names. Lowercase after a colon except proper names and quoted sentences.",
+      "capitalization": "Use sentence case for headings, preserving official names. Lowercase ordinary common nouns and technical terms within sentences even when English capitalizes them; do not lowercase proper names, acronyms or sentence beginnings. Lowercase after a colon except proper names and quoted sentences.",
       "acronyms": "Keep capital-letter acronyms invariable in writing; express plurality through determiners.",
       "hyphens": "Use Spanish syntax for compound modifiers; do not import English hyphens.",
       "units": "metric_then_imperial",
       "dateRule": "Day + de + full lowercase month + de + year, joined with NBSP.",
-      "punctuation": "Do not add French-style spaces before ; : ! ?. Apply native quotation punctuation and the selected percentage form. Preserve Spanish opening ¿ and ¡. Respect Turkish percent-sign placement.",
+      "punctuation": "Do not add French-style spaces before ; : ! ?. Preserve Spanish opening ¿ and ¡. Put U+00A0 NBSP before %, as in 5 %. Separate consecutive sentences with one ordinary space after the closing punctuation, without joining paragraph or segment boundaries. Do not insert spaces inside abbreviations, ordinal suffixes, decimals, URLs or codes.",
+      "rules": [
+        {
+          "id": "es_labels_and_headings",
+          "category": "Translation coverage",
+          "stages": ["glossary", "text", "diagram", "caption", "icml", "layout"],
+          "instruction": "Translate ordinary editorial labels, captions, chapter titles and running headings consistently into Spanish; use Imagen for the caption label Image. Check repeated headings against the translated chapter title rather than leaving an English duplicate. Translate only editable source text: preserve dynamic numbering, variables, cached cross-reference text, internal format/style names and identifiers. Generated references must use the Cross-References panel Definition encoder with the existing Spanish Ver templates; never patch their cached ICML text. Report headings or labels absent from the translation input for source-package/layout review rather than claiming complete coverage.",
+          "verification": "review",
+          "scope": "Unprotected editorial content; native generated references remain panel-owned",
+          "source": "es_review"
+        },
+        {
+          "id": "es_caption_locations",
+          "category": "Captions",
+          "stages": ["text", "caption"],
+          "instruction": "In narrative captions and image descriptions, spell out U.S. state names instead of retaining postal abbreviations. Resolve the full name from the geographical context; do not guess an ambiguous abbreviation or expand matching letters inside a name, code or postal address. This editorial location rule does not authorize rewriting protected source credits or official names.",
+          "verification": "linguistic",
+          "scope": "Unprotected editorial captions and image descriptions",
+          "source": "es_review"
+        },
+        {
+          "id": "es_quotation_consistency",
+          "category": "Quotation marks",
+          "stages": ["text", "diagram", "caption"],
+          "instruction": "Use «texto» consistently for first-level Spanish quotations, with no internal padding. Do not mix English and Spanish first-level quotation marks arbitrarily. Reserve other quote shapes for genuinely nested quotations or protected literal syntax; preserve the nesting and meaning rather than replacing every quote character blindly.",
+          "verification": "linguistic",
+          "scope": "Unprotected editorial content",
+          "source": "es_review"
+        },
+        {
+          "id": "es_ordinal_typography",
+          "category": "Ordinals",
+          "stages": ["glossary", "text", "diagram", "caption"],
+          "instruction": "Write abbreviated ordinals with a period followed by superscript letters, agreeing with the noun in gender and number. For apocopated primer and tercer, use 1.ᵉʳ and 3.ᵉʳ, not baseline 1.er or 3.er; apply the same principle to other ordinal abbreviations. Use º or ª where grammatically appropriate, not the degree sign °. Preserve an already styled superscript run and protected official designations; never add markup or change segment structure to simulate superscript.",
+          "verification": "linguistic",
+          "scope": "Unprotected editorial content",
+          "source": "es_ordinals"
+        },
+        {
+          "id": "es_number_grouping",
+          "category": "Numbers",
+          "stages": ["text", "diagram", "caption"],
+          "instruction": "Use a decimal comma. For ordinary quantities, leave four-digit integers ungrouped (3000, 1650); group integers of five or more digits in threes with U+00A0 NBSP (12 345, 1 234 567), never commas or periods. Determine whether a source comma is a thousands separator or a decimal separator before localizing it: do not turn the Spanish decimal 3,000 into the integer 3000. Do not group years, page numbers, identifiers, postal codes or official designations. This is source-aware translation/review, not a blind number-replacement formula.",
+          "verification": "linguistic",
+          "scope": "Unprotected editorial quantities",
+          "source": "es_numbers"
+        },
+        {
+          "id": "es_parenthetical_periods",
+          "category": "Sentence punctuation",
+          "stages": ["text", "caption"],
+          "instruction": "Place the sentence-final period after the closing parenthesis, including when the whole sentence is parenthetical. Distinguish sentence-final punctuation from internal sentence periods, abbreviation dots, decimals and ellipses; do not blindly move every period adjacent to a parenthesis. Keep generated cross-reference punctuation under the panel encoder's control.",
+          "verification": "linguistic",
+          "scope": "Unprotected editorial content",
+          "source": "es_review"
+        }
+      ],
       "crossReferences": {
         "image": "(Ver <fullPara delim=\":\" />, pág.^S<pageNum />)",
         "text": "(Ver <paraText />, pág.^S<pageNum />)",

@@ -17,12 +17,16 @@ function loadEditorialRules() {
   if (names.length !== LANGUAGES.length || new Set(names).size !== LANGUAGES.length || LANGUAGES.some(name => !names.includes(name))) {
     throw new Error("Translation editorial policy must cover exactly the ten supported languages.");
   }
-  for (const rule of policy.shared) {
+  for (const locale of policy.languages) {
+    if (locale.rules !== undefined && !Array.isArray(locale.rules)) throw new Error("Invalid language-specific editorial rules.");
+  }
+  const allRules = [...policy.shared, ...policy.languages.flatMap(locale => locale.rules || [])];
+  for (const rule of allRules) {
     if (!rule.id || !rule.instruction || !rule.stages?.length || rule.stages.some(stage => !STAGES.includes(stage))) {
       throw new Error("Invalid editorial rule or pipeline stage.");
     }
   }
-  if (new Set(policy.shared.map(rule => rule.id)).size !== policy.shared.length) throw new Error("Duplicate editorial rule IDs.");
+  if (new Set(allRules.map(rule => rule.id)).size !== allRules.length) throw new Error("Duplicate editorial rule IDs.");
   return { policy, sha256: crypto.createHash("sha256").update(bytes).digest("hex").toUpperCase() };
 }
 
@@ -38,7 +42,7 @@ function resolveEditorialRules(language, stage) {
   return {
     version: policy.version, sha256, stage, language: effective,
     precedence: policy.precedence,
-    rules: policy.shared.filter(rule => rule.stages.includes(stage)),
+    rules: [...policy.shared, ...(effective.rules || [])].filter(rule => rule.stages.includes(stage)),
   };
 }
 
@@ -110,7 +114,9 @@ function normalizeEditorialText(value, language, options = {}) {
     if(months){
       const withDe=["Spanish","Portuguese"].includes(selected.language);
       for(const variants of months){
-        const separator=withDe ? "[ \\u00A0\\u202F]+de[ \\u00A0\\u202F]+" : "[ \\u00A0\\u202F]+";
+        // Spanish abbreviated caption dates may omit one or both instances of
+        // de. Expand only an explicit day/month/year, never across line breaks.
+        const separator=selected.language === "Spanish" ? "[ \\u00A0\\u202F]+(?:de[ \\u00A0\\u202F]+)?" : withDe ? "[ \\u00A0\\u202F]+de[ \\u00A0\\u202F]+" : "[ \\u00A0\\u202F]+";
         const date=new RegExp(`\\b(\\d{1,2})${separator}(?:${variants})\\.?${separator}(\\d{4})\\b`,"giu");
         text=text.replace(date,(match,day,year)=> Number(day)<1||Number(day)>31 ? match : [day, ...(withDe?["de"]:[]), variants.split("|")[0], ...(withDe?["de"]:[]), year].join("\u00A0"));
       }

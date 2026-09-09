@@ -24,6 +24,31 @@ test("glossary table recommendations never erase unspecified cells or boundary w
   assert.throws(() => renderGlossaryTableRow("EX\tExample\tExtra", {}), /exactly two/);
 });
 
+test("German glossary presence accepts reviewed forms, not arbitrary compounds or acronym suffixes", async () => {
+  const { containsGlossaryTarget, glossaryPattern } = await importFile("02 Translate Text", "Code", "GlossaryPatterns.mjs");
+  for (const [target, text] of [
+    ['Kompanie', 'Kompanieebene Kompaniechef Kompaniemörser'],
+    ['Infanterie', 'Infanterieausbildung'], ['Infanterie', 'Marineinfanterie'],
+    ['Pionier', 'Pionierkommandos'], ['Ultraviolett', 'Ultraviolettstrahlung'],
+    ['Aufklärung', 'Aufklärungs- und Scharfschützenzug'], ['Aufklärung', 'Aufklärungseinheiten'],
+    ['Aufklärung', 'Aufklärungsauftrag'], ['Aufklärung', 'Aufklärungsmission'],
+    ['Artillerie', 'Artillerieschießen'], ['Brigade', 'Brigadestärke'],
+    ['Gruppe', 'Gruppen'], ['Gruppe', 'Gruppenführer'], ['Zug', 'Zugführer'],
+  ]) {
+    assert.equal(containsGlossaryTarget(text, { target, kind: 'definition' }, 'German'), true, text);
+    assert.equal(containsGlossaryTarget(text, { target, kind: 'definition' }, 'French'), false, text);
+    assert.equal(containsGlossaryTarget(text, { target, kind: 'acronym' }, 'German'), false, text);
+  }
+  for (const text of ['fortgeschrittene', 'fortgeschrittenen', 'fortgeschrittener', 'fortgeschrittenere']) {
+    assert.equal(containsGlossaryTarget(text, { target: 'fortgeschritten', kind: 'definition' }, 'German'), true);
+    assert.equal(containsGlossaryTarget(text, { target: 'fortgeschritten', kind: 'acronym' }, 'German'), true);
+  }
+  for (const [target, text] of [['Zug', 'Zugang'], ['Zug', 'Bezug'], ['Gruppe', 'Gruppenfalsch'], ['Aufklärung', 'Aufklärungs-unsinn'], ['fortgeschritten', 'unfortgeschrittene'], ['fortgeschritten', 'fortgeschrittenenXYZ'], ['CPT', 'CPTs']]) {
+    assert.equal(containsGlossaryTarget(text, { target, kind: 'definition' }, 'German'), false, text);
+  }
+  assert.equal(glossaryPattern('Company').test('companywide'), false);
+});
+
 test("French definition agreement is accepted without weakening source or acronym matching", async () => {
   const { containsGlossaryTarget, glossaryPattern } = await importFile("02 Translate Text", "Code", "GlossaryPatterns.mjs");
   const check = { target: "Aéroporté", kind: "definition" };

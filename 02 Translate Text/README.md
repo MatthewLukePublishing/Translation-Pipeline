@@ -232,3 +232,9 @@ as well as older tuple metadata, while strictly rejecting malformed or newer
 requirements. Updating the official Codex client does not install a model:
 frontier identity and subscription availability are still queried live before
 every model request.
+
+German glossary QA accepts a finite, tested set of ordinary inflections and
+compound forms (for example `fortgeschrittene`, `Kompaniechef`, and `Zugführer`).
+It does not accept arbitrary substrings or suffixes. Source matching, actual
+abbreviations, protected official names and exact glossary-table rows stay
+strict; this terminology-presence check does not replace grammatical review.

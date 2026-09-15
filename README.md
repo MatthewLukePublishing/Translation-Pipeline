@@ -230,6 +230,13 @@ credentials, authentication state, archives, or private production data. A
 failed validation or push must be reported; it must not be described as
 published.
 
+Diagram text ledgers under `03 Translate Diagrams/Ledgers/` are the single
+authorised exception, published at the owner's direction as the durable record
+of a book's diagram text. They are copyrighted content, not MIT-licensed source.
+See [DATA-LICENCE.md](DATA-LICENCE.md), and read
+[the ledger guide](03%20Translate%20Diagrams/Ledgers/README.md) before changing
+one.
+
 ## Management contract
 
 - Primary entry point: `Run-Translation-Job.ps1`
@@ -246,6 +253,15 @@ The archive is local only and is never published.
 
 This program must not store secrets or authentication state locally. All current and future credentials, `.env` files, DPAPI blobs, tokens, private keys, cookies, browser profiles, session state, and provider account contexts belong only in `D:\Google Drive\Publishing\Code\Admin\Access`. Code in this program may reference protected loaders or authenticated sessions from that directory but must never duplicate or print secret values.
 
-## License
+## Licence and content terms
 
-Released under the [MIT License](LICENSE). You may download, clone, fork, and modify your own copy.
+The pipeline source code, tests, and documentation are released under the
+[MIT License](LICENSE). You may download, clone, fork, and modify your own copy
+of the code.
+
+Published content is not. Diagram text ledgers, recorded book text, glossary
+terms, translations, and captions are (c) 2026 Matthew Luke Publishing, all
+rights reserved. The MIT License does not apply to them, their presence here
+grants no permission, and using, copying, redistributing, or translating them
+presumes permission was granted by the copyright holder. See
+[DATA-LICENCE.md](DATA-LICENCE.md).

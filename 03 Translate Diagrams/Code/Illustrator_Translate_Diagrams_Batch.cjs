@@ -43,6 +43,17 @@ const {
   listAiFiles,
   resolveDiagramGlossaryResources,
 } = require("./DiagramResources.cjs");
+const {
+  defaultLedgerPath,
+  indexByHash,
+  loadLedger,
+  matchDiagram,
+  recordTranslations,
+  translationsForLanguage,
+  unitsForWorker,
+  validateMatchReport,
+  writeLedger,
+} = require("./DiagramLedger.cjs");
 
 let MODEL = "";
 let TARGET_LANGUAGE = trimString(process.env.AI_TARGET_LANGUAGE || "");
@@ -51,6 +62,8 @@ let BOOK = trimString(process.env.AI_BOOK || "");
 let GLOSSARY_PROFILE = trimString(process.env.AI_GLOSSARY_PROFILE || "");
 let GLOSSARY_RESOURCES = null;
 let SYMBOL_RUNTIME = null;
+let LEDGER = null;
+let LEDGER_PATH = "";
 const REASONING_EFFORT = "xhigh";
 const MAX_SUBSCRIPTION_RETRIES = 3;
 const CODEX_QUERY_TIMEOUT_MS = 60 * 60 * 1000;
@@ -60,10 +73,15 @@ const STARTUP_TIMEOUT_MS = 30 * 1000;
 const CONTROLLER_READY_TIMEOUT_MS = 2 * 60 * 1000;
 const WORKER_TRANSLATION_WAIT_MS = (CODEX_QUERY_TIMEOUT_MS + 120000) * MAX_SUBSCRIPTION_RETRIES;
 
+// Prose families the scanner treats as ordinary translatable diagram text. Keep
+// these in step with the ledger's prose kinds in DiagramLedger.cjs.
 const OPEN_SANS_MATCHES = [
   "open sans",
   "opensans",
   "open-sans",
+  "chakrapetch",
+  "league gothic",
+  "leaguegothic",
   "alte din 1451 mittelschrift gepraegt",
   "alte din 1451 mittelschrift geprægt"
 ];
@@ -85,8 +103,19 @@ const CODEX_CLI_JS = process.env.CODEX_CLI_JS || path.join(
 );
 const CODEX_NODE_EXE = process.env.CODEX_NODE_EXE || process.execPath;
 const CLI_ARGUMENTS = new Set(process.argv.slice(2));
-for (const argument of CLI_ARGUMENTS) {
-  if (argument !== "--check") throw new Error(`Unknown argument: ${argument}`);
+let LEDGER_REQUESTED = false;
+for (const argument of process.argv.slice(2)) {
+  if (argument === "--check") continue;
+  if (argument === "--ledger") {
+    LEDGER_REQUESTED = true;
+    continue;
+  }
+  if (argument.startsWith("--ledger=")) {
+    LEDGER_REQUESTED = true;
+    LEDGER_PATH = argument.slice("--ledger=".length);
+    continue;
+  }
+  throw new Error(`Unknown argument: ${argument}`);
 }
 const CHECK_ONLY = CLI_ARGUMENTS.has("--check");
 
@@ -1206,6 +1235,7 @@ function makePerFilePaths(tempRoot, stem) {
 
   return {
     scanJson: path.join(scanDir, `${stem}.scan.json`),
+    ledgerUnitsJson: path.join(scanDir, `${stem}.ledger-units.json`),
     translateJson: path.join(translateDir, `${stem}.translations.json`),
     startupJson: path.join(startupDir, `${stem}.started.json`),
     errorJson: path.join(errorDir, `${stem}.error.json`),
@@ -1255,6 +1285,14 @@ async function waitForControllerJobDone({
   });
 }
 
+function persistLedgerTranslations(finalPayload) {
+  if (!LEDGER_REQUESTED || !LEDGER || !finalPayload) return;
+  const changed = recordTranslations(LEDGER.entry, TARGET_LANGUAGE, finalPayload.translations);
+  if (!changed) return;
+  const result = writeLedger(LEDGER, LEDGER.source, { language: TARGET_LANGUAGE });
+  console.log(`Recorded ${changed} ${TARGET_LANGUAGE} translation(s) in ${result.filePath}.`);
+}
+
 async function processFileInSession({
   aiFile,
   illustratorState,
@@ -1276,11 +1314,18 @@ async function processFileInSession({
   }
   const publication = prepareDiagramPublication(aiFile);
 
+  let ledgerEntry = null;
+  if (LEDGER_REQUESTED) {
+    ledgerEntry = matchDiagram(LEDGER, aiFile).entry;
+    writeJson(perFile.ledgerUnitsJson, { file: aiFile, units: unitsForWorker(ledgerEntry) });
+  }
+
   const envVars = {
-    AI_MODE: "process",
+    AI_MODE: LEDGER_REQUESTED ? "ledger" : "process",
     AI_BATCH_FILE: aiFile,
     AI_OUTPUT_FILE: publication.outputPath,
     AI_SCAN_JSON: perFile.scanJson,
+    AI_LEDGER_UNITS_JSON: perFile.ledgerUnitsJson,
     AI_TRANSLATION_JSON: perFile.translateJson,
     AI_STARTUP_JSON: perFile.startupJson,
     AI_ERROR_JSON: perFile.errorJson,
@@ -1326,6 +1371,9 @@ async function processFileInSession({
   });
 
   const scanData = readJson(perFile.scanJson);
+  if (ledgerEntry) {
+    validateMatchReport(ledgerEntry, scanData);
+  }
   const runs = Array.isArray(scanData.runs) ? scanData.runs : [];
 
   if (!runs.length) {
@@ -1354,9 +1402,35 @@ async function processFileInSession({
     return;
   }
 
-  console.log(`Found ${runs.length} Open Sans text runs. Translating through the Codex subscription...`);
+  const knownTranslations = ledgerEntry ? translationsForLanguage(ledgerEntry, TARGET_LANGUAGE) : new Map();
+  const reusedTranslations = [];
+  const pendingRuns = [];
+  for (const run of runs) {
+    const value = knownTranslations.get(String(run.id));
+    if (value === undefined) pendingRuns.push(run);
+    else reusedTranslations.push({ id: String(run.id), translated: value });
+  }
 
-  const translationPayload = await translateDiagramOnce(scanData, perFile);
+  let modelTranslations = [];
+  if (pendingRuns.length) {
+    if (ledgerEntry) {
+      console.log(
+        `Found ${runs.length} ledger text items; translating ${pendingRuns.length} ` +
+        `through the Codex subscription (${reusedTranslations.length} reused from the ledger)...`
+      );
+    } else {
+      console.log(`Found ${runs.length} Open Sans text runs. Translating through the Codex subscription...`);
+    }
+    const modelPayload = await translateDiagramOnce({ ...scanData, runs: pendingRuns }, perFile);
+    modelTranslations = Array.isArray(modelPayload.translations) ? modelPayload.translations : [];
+  } else {
+    console.log(
+      `Found ${runs.length} ledger text items; every one already has a ${TARGET_LANGUAGE} ` +
+      "translation recorded in the ledger."
+    );
+  }
+
+  const translationPayload = { translations: [...reusedTranslations, ...modelTranslations] };
   const finalPayload = sortTranslationsLikeRuns(scanData, translationPayload);
   await resolveSubscriptionModel(MODEL);
 
@@ -1384,6 +1458,7 @@ async function processFileInSession({
   const finalModelResolution = await resolveSubscriptionModel(MODEL);
   writeJson(`${perFile.translateJson}.publication.json`, { publication, finalModelResolution });
   publishDiagram(publication);
+  persistLedgerTranslations(finalPayload);
   console.log("Done.");
 }
 
@@ -1457,6 +1532,13 @@ async function main() {
     GLOSSARY_RESOURCES.symbolsWorkbook,
     GLOSSARY_RESOURCES.targetLanguage,
   );
+
+  if (LEDGER_REQUESTED) {
+    LEDGER_PATH = LEDGER_PATH || process.env.AI_DIAGRAM_LEDGER
+      || defaultLedgerPath(PROGRAM_ROOT, GLOSSARY_RESOURCES.book);
+    LEDGER = loadLedger(LEDGER_PATH, { book: GLOSSARY_RESOURCES.book });
+  }
+
   assertChatGptLogin();
   const modelResolution = await resolveSubscriptionModel();
   MODEL = modelResolution.model;
@@ -1465,6 +1547,18 @@ async function main() {
       `DIAGRAM_SUBSCRIPTION_READY|model=${MODEL}|effort=${REASONING_EFFORT}|` +
       `book=${GLOSSARY_RESOURCES.book}|language=${TARGET_LANGUAGE}|profile=${GLOSSARY_RESOURCES.glossaryProfile}`
     );
+    if (LEDGER) {
+      const pending = LEDGER.diagrams.reduce(
+        (total, diagram) => total + (diagram.textUnits || []).filter(
+          (unit) => unit.kind === "prose" && !(unit.translations || {})[GLOSSARY_RESOURCES.targetLanguage]
+        ).length,
+        0,
+      );
+      console.log(
+        `DIAGRAM_LEDGER_READY|file=${LEDGER.filePath}|book=${LEDGER.book}|` +
+        `diagrams=${LEDGER.diagrams.length}|pendingUnits=${pending}|language=${GLOSSARY_RESOURCES.targetLanguage}`
+      );
+    }
     return;
   }
 
@@ -1489,6 +1583,24 @@ async function main() {
     return;
   }
 
+  if (LEDGER_REQUESTED) {
+    const ledgerIndex = indexByHash(LEDGER);
+    const unmatched = [];
+    for (const file of aiFiles) {
+      try {
+        matchDiagram(LEDGER, file, ledgerIndex);
+      } catch (error) {
+        unmatched.push(`${path.basename(file)}: ${error.message}`);
+      }
+    }
+    if (unmatched.length) {
+      throw new Error(
+        `The diagram ledger does not cover ${unmatched.length} of ${aiFiles.length} file(s). ` +
+        `Translate a pristine copy of the recorded source, or regenerate the ledger:\n${unmatched.join("\n")}`
+      );
+    }
+  }
+
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ai-open-sans-translate-"));
   const resourceDir = path.join(tempRoot, "resources");
   ensureDir(resourceDir);
@@ -1506,6 +1618,10 @@ async function main() {
   console.log("Target language:", TARGET_LANGUAGE);
   console.log("Book:", GLOSSARY_RESOURCES.book);
   console.log("Glossary profile:", GLOSSARY_RESOURCES.glossaryProfile);
+  if (LEDGER) {
+    console.log("Ledger:", LEDGER.filePath);
+    console.log("Ledger diagrams:", LEDGER.diagrams.length);
+  }
   console.log("Failure log:", failureLogPath);
   console.log("");
 
@@ -1521,6 +1637,7 @@ async function main() {
     `Target language: ${TARGET_LANGUAGE}`,
     `Book: ${GLOSSARY_RESOURCES.book}`,
     `Glossary profile: ${GLOSSARY_RESOURCES.glossaryProfile}`,
+    `Ledger: ${LEDGER ? LEDGER.filePath : "not used"}`,
     `Word glossary: ${GLOSSARY_RESOURCES.wordsJson}`,
     `Acronym glossary: ${GLOSSARY_RESOURCES.acronymsJson}`,
     ""

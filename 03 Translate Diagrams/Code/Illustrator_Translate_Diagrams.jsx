@@ -620,6 +620,155 @@ if (typeof JSON === "undefined") {
     };
   }
 
+  function isWhitespaceChar(ch) {
+    return /\s/.test(ch);
+  }
+
+  function normalizeFrameContent(contents) {
+    var text = normalizeString(contents);
+    var norm = "";
+    var map = [];
+    var pendingWhitespaceIndex = -1;
+
+    for (var i = 0; i < text.length; i++) {
+      var ch = text.charAt(i);
+
+      if (isWhitespaceChar(ch)) {
+        if (pendingWhitespaceIndex === -1) pendingWhitespaceIndex = i;
+        continue;
+      }
+
+      if (pendingWhitespaceIndex !== -1) {
+        if (norm.length) {
+          norm += " ";
+          map.push(pendingWhitespaceIndex);
+        }
+        pendingWhitespaceIndex = -1;
+      }
+
+      norm += ch;
+      map.push(i);
+    }
+
+    return { norm: norm, map: map };
+  }
+
+  function buildFrameIndex(doc) {
+    var frames = [];
+
+    for (var i = 0; i < doc.textFrames.length; i++) {
+      var contents = "";
+      try {
+        contents = doc.textFrames[i].contents;
+      } catch (e) {
+        throw new Error("Could not read text frame contents at frame index " + i + ": " + e.message);
+      }
+      var normalized = normalizeFrameContent(contents);
+      frames.push({ frameIndex: i, norm: normalized.norm, map: normalized.map });
+    }
+
+    return frames;
+  }
+
+  function matchLedgerUnits(doc, ledgerUnits, glossaryPairs, glossaryUsageAcc) {
+    var frames = buildFrameIndex(doc);
+    var runs = [];
+    var sourceCodeRuns = [];
+    var issues = [];
+    var frameCursor = 0;
+    var charCursor = 0;
+
+    for (var i = 0; i < ledgerUnits.length; i++) {
+      var unit = ledgerUnits[i];
+      var wanted = normalizeString(unit.plain);
+
+      if (!wanted) {
+        issues.push("Ledger unit " + unit.id + " has no text.");
+        continue;
+      }
+
+      var foundFrame = -1;
+      var foundAt = -1;
+
+      while (frameCursor < frames.length) {
+        var candidate = frames[frameCursor];
+        var at = candidate.norm.indexOf(wanted, charCursor);
+        if (at !== -1) {
+          foundFrame = frameCursor;
+          foundAt = at;
+          break;
+        }
+        frameCursor += 1;
+        charCursor = 0;
+      }
+
+      if (foundFrame === -1) {
+        issues.push("Ledger unit " + unit.id + " was not found in the document: " + wanted);
+        continue;
+      }
+
+      var frame = frames[foundFrame];
+      var startIndex = frame.map[foundAt];
+      var endIndex = frame.map[foundAt + wanted.length - 1] + 1;
+      var length = endIndex - startIndex;
+
+      if (length <= 0) {
+        issues.push("Ledger unit " + unit.id + " matched an empty range.");
+        continue;
+      }
+
+      if (unit.kind === "sourceCode") {
+        sourceCodeRuns.push({
+          id: unit.id,
+          frameIndex: frame.frameIndex,
+          start: startIndex,
+          length: length,
+          runType: "sourceCode",
+          text: wanted
+        });
+      } else {
+        var payload = {
+          id: unit.id,
+          frameIndex: frame.frameIndex,
+          start: startIndex,
+          length: length,
+          runType: "openSans",
+          originalText: wanted
+        };
+
+        if (glossaryPairs && glossaryPairs.length) {
+          var matchedGlossaryPairs = findGlossaryPairsInText(wanted, glossaryPairs);
+          if (matchedGlossaryPairs.length) {
+            payload.glossaryMatches = [];
+            for (var g = 0; g < matchedGlossaryPairs.length; g++) {
+              payload.glossaryMatches.push({
+                source: matchedGlossaryPairs[g].source,
+                target: matchedGlossaryPairs[g].target
+              });
+            }
+            addGlossaryUsage(glossaryUsageAcc, matchedGlossaryPairs);
+          }
+        }
+
+        runs.push(payload);
+      }
+
+      charCursor = foundAt + wanted.length;
+    }
+
+    return {
+      file: doc.fullName ? doc.fullName.fsName : doc.name,
+      targetLanguage: targetLanguage,
+      count: runs.length,
+      runs: runs,
+      sourceCodeCount: sourceCodeRuns.length,
+      sourceCodeRuns: sourceCodeRuns,
+      glossary: glossaryUsageAcc.items,
+      issues: issues,
+      ledgerUnitCount: ledgerUnits.length
+    };
+  }
+
   function makeRunMap(scanPayload) {
     var map = {};
     var i;
@@ -822,6 +971,7 @@ if (typeof JSON === "undefined") {
   var outputPath = getenv("AI_OUTPUT_FILE", "");
   var scanJsonPath = getenv("AI_SCAN_JSON", "");
   var translationJsonPath = getenv("AI_TRANSLATION_JSON", "");
+  var ledgerUnitsJsonPath = getenv("AI_LEDGER_UNITS_JSON", "");
   var startupJsonPath = getenv("AI_STARTUP_JSON", "");
   var errorJsonPath = getenv("AI_ERROR_JSON", "");
 
@@ -900,11 +1050,34 @@ if (typeof JSON === "undefined") {
 
     doc = app.open(f);
 
-    if (mode !== "process") {
+    if (mode !== "process" && mode !== "ledger") {
       throw new Error("Unknown AI_MODE: " + mode);
     }
 
-    var scanPayload = scanDocument(doc, openSansTerms, sourceCodeTerms, glossaryPairs, targetLanguage);
+    var scanPayload;
+    if (mode === "ledger") {
+      if (!ledgerUnitsJsonPath) throw new Error("AI_LEDGER_UNITS_JSON is missing in ledger mode.");
+      if (!fileExists(ledgerUnitsJsonPath)) throw new Error("Ledger unit file not found: " + ledgerUnitsJsonPath);
+
+      var ledgerUnitsPayload = JSON.parse(readTextFile(ledgerUnitsJsonPath));
+      var ledgerUnits = (ledgerUnitsPayload && ledgerUnitsPayload.units) ? ledgerUnitsPayload.units : [];
+      if (!ledgerUnits.length) throw new Error("Ledger unit file contains no units: " + ledgerUnitsJsonPath);
+
+      scanPayload = matchLedgerUnits(doc, ledgerUnits, glossaryPairs, { items: [], _seen: {} });
+
+      if (scanPayload.issues.length) {
+        writeErrorFile(errorJsonPath, {
+          stage: "ledgerMatch",
+          message: "One or more ledger text items could not be located in the diagram.",
+          file: filePath,
+          issues: scanPayload.issues
+        });
+        throw new Error("One or more ledger text items could not be located in the diagram.");
+      }
+    } else {
+      scanPayload = scanDocument(doc, openSansTerms, sourceCodeTerms, glossaryPairs, targetLanguage);
+    }
+
     writeTextFile(scanJsonPath, JSON.stringify(scanPayload));
 
     waitForFile(translationJsonPath, waitTimeoutMs, waitPollMs, errorJsonPath);

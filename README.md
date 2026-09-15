@@ -77,6 +77,10 @@ node '.\01 Translate Glossaries\Code\Shared\Build_Glossary_Runtime.cjs' --check
 # Translate Illustrator diagrams (interactive)
 node '.\03 Translate Diagrams\Code\Illustrator_Translate_Diagrams_Batch.cjs'
 
+# Translate a book's diagrams from its recorded ledger: no text export, one
+# Illustrator session, and only untranslated text is sent to the model
+node '.\03 Translate Diagrams\Code\Illustrator_Translate_Diagrams_Batch.cjs' --ledger
+
 # Translate the configured comic-caption workbook
 node '.\04 Translate Comic Captions\Code\Translate_Comic_Captions.js'
 ```

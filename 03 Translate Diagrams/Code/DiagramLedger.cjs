@@ -237,7 +237,7 @@ function recordTranslations(entry, language, translations) {
   return recorded;
 }
 
-function serializeLedger(ledger, source) {
+function serializeLedger(source) {
   const head = { ...source };
   delete head.diagrams;
   head.generatedUtc = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
@@ -277,7 +277,7 @@ function writeLedger(ledger, source, { language = "" } = {}) {
       { filePath: ledger.filePath },
     );
   }
-  const text = serializeLedger(ledger, source);
+  const text = serializeLedger(source);
   writeFileAtomicSync(ledger.filePath, text);
   ledger.sha256 = crypto.createHash("sha256").update(fs.readFileSync(ledger.filePath)).digest("hex");
   return { filePath: ledger.filePath, language, bytes: Buffer.byteLength(text) };

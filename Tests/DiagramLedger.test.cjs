@@ -65,7 +65,7 @@ function makeSource(root, { diagrams } = {}) {
     diagrams: diagramsOut,
   };
   const ledgerPath = path.join(root, "DEMO-Diagram-Text-Ledger.json");
-  fs.writeFileSync(ledgerPath, serializeLedger(null, source));
+  fs.writeFileSync(ledgerPath, serializeLedger(source));
   return { ledgerPath, source };
 }
 
@@ -118,7 +118,7 @@ test("ledger loading rejects a wrong schema, book, kind, or repeated unit id", (
   const write = (mutate) => {
     const copy = JSON.parse(JSON.stringify(source));
     mutate(copy);
-    fs.writeFileSync(ledgerPath, serializeLedger(null, copy));
+    fs.writeFileSync(ledgerPath, serializeLedger(copy));
   };
 
   write((copy) => { copy.schemaVersion = "diagram-text-ledger-1"; });
@@ -217,7 +217,7 @@ test("the published FPST ledger satisfies the ledger contract", () => {
 
 test("the ledger writer is the only writer and never leaves a partial file", () => fixture(root => {
   const { ledgerPath, source } = makeSource(root);
-  const text = serializeLedger(null, source);
+  const text = serializeLedger(source);
   assert.equal(text.endsWith("}\n"), true);
   assert.equal(typeof crypto.createHash("sha256").update(text).digest("hex"), "string");
   const parsed = JSON.parse(text);

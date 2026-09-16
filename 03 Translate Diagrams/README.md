@@ -19,21 +19,60 @@ Stage 3 checks that its runtime is current before any model or Adobe operation.
 Ambiguous glossary senses are passed as context, not forced substitutions.
 The diagram-specific symbol workbook remains a separate input.
 
-## Ledger mode
+## Source selection
 
-A ledger records the text of every diagram in a book, so a later language is
-translated from that record instead of exporting the text again. Ledger mode is
-opt-in; without `--ledger` the stage scans the artwork as before.
+The stage reads the diagram text from one of two sources, and it never chooses
+between them on its own:
+
+1. **Reuse the recorded ledger** — translate from
+   `Ledgers/<BOOK>-Diagram-Text-Ledger.json`, so the text is never exported from
+   the artwork again.
+2. **Extract from the artwork** — scan the selected folder for `.ai` files and
+   export the text from Illustrator, as the stage has always done.
+
+An interactive run with no source flag asks which one to use, and offers no
+default:
+
+```text
+Diagram text source (no default):
+1. Reuse the recorded diagram text ledger
+2. Extract text from the Illustrator artwork
+Choose 1 or 2 (q to cancel):
+```
+
+The controller also accepts the words `ledger` and `extract` in place of `1` and
+`2`, in any case. A blank or unrecognised answer asks again. `q`, end of input
+(EOF) and Ctrl-C cancel the run before Illustrator starts.
+
+Choose the source up front instead of answering the prompt:
+
+- `--ledger` reuses the book's ledger at
+  `Ledgers/<BOOK>-Diagram-Text-Ledger.json`.
+- `--ledger=<path>` reuses a ledger stored at another location.
+- `--extract` extracts the text from the Illustrator artwork.
+
+`--ledger` and `--extract` together is an error. A noninteractive run, and any
+`--check` run, must name `--ledger` or `--extract`; the controller refuses to
+guess when it cannot ask. `AI_DIAGRAM_LEDGER` sets only the ledger path, so it
+never selects the ledger source by itself.
 
 ```powershell
 $env:AI_TARGET_LANGUAGE = 'German'
 $env:AI_BOOK = 'FPST'
-node '.\03 Translate Diagrams\Code\Illustrator_Translate_Diagrams_Batch.cjs' --check      # read-only, no Adobe
+# Read-only readiness check: names the source instead of prompting
+node '.\03 Translate Diagrams\Code\Illustrator_Translate_Diagrams_Batch.cjs' --check --ledger
+# Reuse the recorded ledger
 node '.\03 Translate Diagrams\Code\Illustrator_Translate_Diagrams_Batch.cjs' --ledger
+# Or extract the text from the artwork
+node '.\03 Translate Diagrams\Code\Illustrator_Translate_Diagrams_Batch.cjs' --extract
 ```
 
-The ledger defaults to `Ledgers/<BOOK>-Diagram-Text-Ledger.json`. Use
-`--ledger=<path>` or `AI_DIAGRAM_LEDGER` for another location.
+## Ledger mode
+
+A ledger records the text of every diagram in a book, so a later language is
+translated from that record instead of exporting the text again. The ledger
+defaults to `Ledgers/<BOOK>-Diagram-Text-Ledger.json`; use `--ledger=<path>` or
+`AI_DIAGRAM_LEDGER` for another location.
 
 What changes in ledger mode:
 
@@ -72,15 +111,16 @@ before retrying that file. Keep its recovery evidence until the intended version
 has been verified. Native Illustrator rendering still requires a desktop check.
 
 ```powershell
+# With no source flag the run asks for the ledger or the artwork first.
 node '.\03 Translate Diagrams\Code\Illustrator_Translate_Diagrams_Batch.cjs'
 ```
 
-For a readiness check that does not launch Illustrator:
+For a readiness check that does not launch Illustrator, name the source too:
 
 ```powershell
 $env:AI_TARGET_LANGUAGE = 'French'
 $env:AI_BOOK = 'DEMO'
-node '.\03 Translate Diagrams\Code\Illustrator_Translate_Diagrams_Batch.cjs' --check
+node '.\03 Translate Diagrams\Code\Illustrator_Translate_Diagrams_Batch.cjs' --check --extract
 ```
 
 The controller discovers `.ai` files in nested folders, runs one Illustrator session, and returns a failed process result if any diagram fails. It uses only the ChatGPT-authenticated Codex subscription. Before each model request and retry, it freshly queries OpenAI's official frontier metadata and the live subscription catalog, verifies the exact model and `xhigh`, and records the resolution. Failed discovery, an unavailable frontier, or a model change stops the entire run without another model query or file retry. No bundled/local model catalog, paid API credentials, or fallback model is accepted. See the root README for live-discovery requirements. Reference workbooks, Adobe files, generated scans, translations, logs, and temporary files are local-only inputs or outputs.

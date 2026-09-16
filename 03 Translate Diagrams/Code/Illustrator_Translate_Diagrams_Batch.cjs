@@ -5,7 +5,7 @@
  * Illustrator_Translate_Diagrams_Batch.cjs
  *
  * What it does
- * 1. Prompts for a folder containing .ai files
+ * 1. Requires a text-source choice, then prompts for a folder containing .ai files
  * 2. Launches Illustrator ONCE for the whole batch
  * 3. A persistent controller JSX runs inside Illustrator
  * 4. For each .ai file:
@@ -102,27 +102,68 @@ const CODEX_CLI_JS = process.env.CODEX_CLI_JS || path.join(
   "npm", "node_modules", "@openai", "codex", "bin", "codex.js",
 );
 const CODEX_NODE_EXE = process.env.CODEX_NODE_EXE || process.execPath;
-const CLI_ARGUMENTS = new Set(process.argv.slice(2));
 let LEDGER_REQUESTED = false;
-for (const argument of process.argv.slice(2)) {
-  if (argument === "--check") continue;
-  if (argument === "--ledger") {
-    LEDGER_REQUESTED = true;
-    continue;
+function parseDiagramArguments(args) {
+  const options = { sourceMode: null, ledgerPath: "", checkOnly: false };
+  for (const argument of args) {
+    if (argument === "--check") {
+      options.checkOnly = true;
+      continue;
+    }
+    const isLedger = argument === "--ledger" || argument.startsWith("--ledger=");
+    if (!isLedger && argument !== "--extract") throw new Error(`Unknown argument: ${argument}`);
+    const mode = isLedger ? "ledger" : "extract";
+    if (options.sourceMode && options.sourceMode !== mode) {
+      throw new Error("Choose exactly one diagram text source: --ledger or --extract, not both.");
+    }
+    options.sourceMode = mode;
+    if (argument.startsWith("--ledger=")) {
+      const ledgerPath = argument.slice("--ledger=".length).trim();
+      if (!ledgerPath) throw new Error("--ledger=<path> requires a nonempty ledger path.");
+      if (options.ledgerPath && options.ledgerPath !== ledgerPath) {
+        throw new Error("Choose only one diagram ledger path.");
+      }
+      options.ledgerPath = ledgerPath;
+    }
   }
-  if (argument.startsWith("--ledger=")) {
-    LEDGER_REQUESTED = true;
-    LEDGER_PATH = argument.slice("--ledger=".length);
-    continue;
-  }
-  throw new Error(`Unknown argument: ${argument}`);
+  return options;
 }
-const CHECK_ONLY = CLI_ARGUMENTS.has("--check");
 
-function ask(question) {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise((resolve) => {
+async function chooseDiagramTextSource(options, {
+  interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY),
+  question = ask,
+  report = console.log,
+} = {}) {
+  if (options.sourceMode) return options.sourceMode;
+  if (options.checkOnly || !interactive) {
+    throw new Error("No diagram text source selected. Specify --ledger or --extract; neither is the default (also required with --check).");
+  }
+  while (true) {
+    const answer = (await question(
+      "Diagram text source (no default):\n" +
+      "  1. Reuse the recorded diagram text ledger\n" +
+      "  2. Extract text from the Illustrator artwork\n" +
+      "Choose 1 or 2 (q to cancel): "
+    )).trim().toLowerCase();
+    if (answer === "1" || answer === "ledger") return "ledger";
+    if (answer === "2" || answer === "extract") return "extract";
+    if (answer === "q") throw new Error("Diagram translation cancelled; no text source selected.");
+    report("Select 1 (ledger) or 2 (extract). Enter alone does not select either option.");
+  }
+}
+
+function ask(question, { input = process.stdin, output = process.stdout } = {}) {
+  const rl = readline.createInterface({ input, output });
+  return new Promise((resolve, reject) => {
+    const cancel = () => {
+      reject(new Error("Input closed or cancelled before an answer was supplied."));
+      rl.close();
+    };
+    rl.once("close", cancel);
+    rl.once("SIGINT", cancel);
     rl.question(question, (answer) => {
+      rl.removeListener("close", cancel);
+      rl.removeListener("SIGINT", cancel);
       rl.close();
       resolve(answer.trim());
     });
@@ -1498,6 +1539,13 @@ async function processFileWithRetry({
 }
 
 async function main() {
+  // Resolve the user's choice before loading resources, querying a model, or
+  // launching Adobe. An environment ledger path is not a mode selection.
+  const options = parseDiagramArguments(process.argv.slice(2));
+  const sourceMode = await chooseDiagramTextSource(options);
+  LEDGER_REQUESTED = sourceMode === "ledger";
+  LEDGER_PATH = options.ledgerPath;
+  const CHECK_ONLY = options.checkOnly;
   const scriptDir = __dirname;
   const jsxWorker = path.join(scriptDir, "Illustrator_Translate_Diagrams.jsx");
 
@@ -1547,7 +1595,7 @@ async function main() {
   if (CHECK_ONLY) {
     console.log(
       `DIAGRAM_SUBSCRIPTION_READY|model=${MODEL}|effort=${REASONING_EFFORT}|` +
-      `book=${GLOSSARY_RESOURCES.book}|language=${TARGET_LANGUAGE}|profile=${GLOSSARY_RESOURCES.glossaryProfile}`
+      `book=${GLOSSARY_RESOURCES.book}|language=${TARGET_LANGUAGE}|profile=${GLOSSARY_RESOURCES.glossaryProfile}|source=${sourceMode}`
     );
     if (LEDGER) {
       const pending = LEDGER.diagrams.reduce(
@@ -1619,6 +1667,7 @@ async function main() {
   console.log("Reasoning effort:", REASONING_EFFORT);
   console.log("Target language:", TARGET_LANGUAGE);
   console.log("Book:", GLOSSARY_RESOURCES.book);
+  console.log("Diagram text source:", sourceMode);
   console.log("Glossary profile:", GLOSSARY_RESOURCES.glossaryProfile);
   if (LEDGER) {
     console.log("Ledger:", LEDGER.filePath);
@@ -1638,6 +1687,7 @@ async function main() {
     `Reasoning effort: ${REASONING_EFFORT}`,
     `Target language: ${TARGET_LANGUAGE}`,
     `Book: ${GLOSSARY_RESOURCES.book}`,
+    `Diagram text source: ${sourceMode}`,
     `Glossary profile: ${GLOSSARY_RESOURCES.glossaryProfile}`,
     `Ledger: ${LEDGER ? LEDGER.filePath : "not used"}`,
     `Word glossary: ${GLOSSARY_RESOURCES.wordsJson}`,
@@ -1717,7 +1767,7 @@ async function main() {
   }
 }
 
-module.exports = { assertBatchSucceeded };
+module.exports = { assertBatchSucceeded, parseDiagramArguments, chooseDiagramTextSource, ask };
 
 if (require.main === module) {
   main().catch((err) => {

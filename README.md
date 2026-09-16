@@ -87,12 +87,17 @@ Other stages:
 node '.\01 Translate Glossaries\Code\Shared\Build_Glossary_Runtime.cjs'
 node '.\01 Translate Glossaries\Code\Shared\Build_Glossary_Runtime.cjs' --check
 
-# Translate Illustrator diagrams (interactive)
+# Translate Illustrator diagrams (interactive). With no source flag the
+# controller asks whether to reuse the recorded ledger or extract the text
+# from the artwork; it offers no default.
 node '.\03 Translate Diagrams\Code\Illustrator_Translate_Diagrams_Batch.cjs'
 
-# Translate a book's diagrams from its recorded ledger: no text export, one
-# Illustrator session, and only untranslated text is sent to the model
+# Choose the source instead of answering the prompt. --ledger reuses the book's
+# recorded ledger: no text export, one Illustrator session, and only
+# untranslated text is sent to the model. --extract exports the text from the
+# artwork.
 node '.\03 Translate Diagrams\Code\Illustrator_Translate_Diagrams_Batch.cjs' --ledger
+node '.\03 Translate Diagrams\Code\Illustrator_Translate_Diagrams_Batch.cjs' --extract
 
 # Translate the configured comic-caption workbook
 node '.\04 Translate Comic Captions\Code\Translate_Comic_Captions.js'

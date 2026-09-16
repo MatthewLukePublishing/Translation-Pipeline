@@ -13,6 +13,12 @@ do not create or edit artwork merely to satisfy the pipeline sequence.
 - The local `Reference/New Acronyms Symbols.xlsx` supplies diagram-specific labels.
 - The local Stage 1 book map selects the canonical word and acronym runtime JSON.
 
+The public MFP/FPST glossary snapshot can supply those runtimes; follow the
+Stage 1 guide and published-map example. When a book uses `publishedSource`,
+Stage 3 checks that its runtime is current before any model or Adobe operation.
+Ambiguous glossary senses are passed as context, not forced substitutions.
+The diagram-specific symbol workbook remains a separate input.
+
 ## Ledger mode
 
 A ledger records the text of every diagram in a book, so a later language is

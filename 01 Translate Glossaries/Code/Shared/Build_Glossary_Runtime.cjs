@@ -5,6 +5,7 @@ const { commitFileSetWithJournalSync, recoverFileSetJournalSync } = require("../
 const { readJsonFile: readJson } = require("../../../Code/FileUtilities.cjs");
 const { resolveGlossaryProgramPath } = require("./GlossaryProgramPath.cjs");
 const { editorialPrompt } = require("../../../Code/TranslationEditorialRules.cjs");
+const { readPublishedSource, applyPublishedGlossary } = require("./PublishedGlossary.cjs");
 
 const PROGRAM_ROOT = path.resolve(__dirname, "..", "..", "..");
 const MAP_PATH = path.join(PROGRAM_ROOT, "01 Translate Glossaries", "book_glossary_map.json");
@@ -15,6 +16,10 @@ function parseArgs(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
     if (token === "--check") args.check = true;
+    else if (token === "--map") {
+      args.map = String(argv[++index] || "").trim();
+      if (!args.map) throw new Error("--map requires a path.");
+    }
     else if (token === "--rules") {
       args.rules = String(argv[++index] || "").trim();
       if (!args.rules) throw new Error("--rules requires a target language.");
@@ -139,6 +144,7 @@ function uniqueFamilies(config) {
     const signature = JSON.stringify({
       authoringWorkbook: bookConfig.authoringWorkbook,
       runtime: bookConfig.runtime,
+      publishedSource: bookConfig.publishedSource,
     });
     const existing = byFamily.get(bookConfig.family);
     if (existing && existing.signature !== signature) {
@@ -149,38 +155,60 @@ function uniqueFamilies(config) {
   return byFamily;
 }
 
+function compileFamily(map, familyName, familyConfig, programRoot = PROGRAM_ROOT) {
+  const resolve = (value, label) => resolveGlossaryProgramPath(programRoot, value, label);
+  const workbookPath = familyConfig.authoringWorkbook ? resolve(familyConfig.authoringWorkbook, `${familyName} authoring workbook`) : "";
+  let acronyms = Object.create(null), words = Object.create(null), contextual;
+  const sourcePaths = new Set(workbookPath ? [workbookPath.toLowerCase()] : []);
+  if (workbookPath) {
+    if (!fs.existsSync(workbookPath)) throw new Error(`Missing authoring workbook: ${workbookPath}`);
+    const workbook = XLSX.readFile(workbookPath, { cellFormula: true, cellText: false, cellDates: false });
+    inspectWorkbook(workbook, workbookPath, [map.sheets.acronyms, map.sheets.words]);
+    acronyms = readSheet(workbook, map.sheets.acronyms, map.columns);
+    words = readSheet(workbook, map.sheets.words, map.columns);
+  } else if (!familyConfig.publishedSource) throw new Error(`${familyName} requires an authoring workbook or publishedSource.`);
+  if (familyConfig.publishedSource) {
+    if (familyConfig.publishedSource.book !== familyName) throw new Error("Published glossary book must match its family.");
+    if (!familyConfig.runtime.contextual) throw new Error("Published glossary requires runtime.contextual for provenance and ambiguous senses.");
+    const source = readPublishedSource(programRoot, familyConfig.publishedSource);
+    sourcePaths.add(source.filePath.toLowerCase());
+    ({ acronyms, words, contextual } = applyPublishedGlossary({ acronyms, words, columns: map.columns, source, config: familyConfig.publishedSource }));
+  }
+  const collisions = caseFoldCollisions(acronyms, words);
+  assertAllowedCaseFoldCollisions(map, familyName, collisions);
+  const outputs = [["acronyms", acronyms], ["words", words]];
+  if (contextual) outputs.push(["contextual", contextual]);
+  const replacements = outputs.map(([kind, payload]) => ({
+      filePath: resolve(familyConfig.runtime[kind], `${familyName} ${kind} runtime`),
+      data: `${JSON.stringify(payload, null, 2)}\n`, options: "utf8",
+    }));
+  if (replacements.some(item => sourcePaths.has(item.filePath.toLowerCase()))) throw new Error("Runtime output cannot overwrite a glossary source.");
+  if (new Set(replacements.map(item => item.filePath.toLowerCase())).size !== replacements.length) throw new Error("Runtime glossary paths must be distinct.");
+  return { workbookPath, acronyms, words, collisions, replacements };
+}
+
+function assertFamilyCurrent(map, familyName, familyConfig, programRoot = PROGRAM_ROOT) {
+  const compiled = compileFamily(map, familyName, familyConfig, programRoot);
+  const journalPath = `${compiled.workbookPath || compiled.replacements[0].filePath}.runtime-transaction.json`;
+  if (fs.existsSync(journalPath)) throw new Error("Glossary check is read-only; recover the pending runtime transaction with a normal build first.");
+  for (const { filePath, data } of compiled.replacements) {
+    if (!fs.existsSync(filePath)) throw new Error(`Missing runtime glossary: ${filePath}`);
+    const actual = fs.readFileSync(filePath, "utf8").replace(/^\uFEFF/, "").replace(/\r\n/g, "\n");
+    if (actual !== data) throw new Error(`${familyName} runtime is stale; rebuild it from the configured glossary sources.`);
+  }
+  return compiled;
+}
+
 async function buildFamily(map, familyName, familyConfig, checkOnly) {
-  const workbookPath = assertWithinProgram(familyConfig.authoringWorkbook, `${familyName} authoring workbook`);
-  if (!fs.existsSync(workbookPath)) throw new Error(`Missing authoring workbook: ${workbookPath}`);
-  const journalPath = `${workbookPath}.runtime-transaction.json`;
+  const journalBase = assertWithinProgram(familyConfig.authoringWorkbook || familyConfig.runtime.acronyms, `${familyName} glossary journal`);
+  const journalPath = `${journalBase}.runtime-transaction.json`;
   if (checkOnly && fs.existsSync(journalPath)) throw new Error("Glossary check is read-only; recover the pending runtime transaction with a normal build first.");
   if (!checkOnly) recoverFileSetJournalSync(journalPath);
 
-  const workbook = XLSX.readFile(workbookPath, { cellFormula: true, cellText: false, cellDates: false });
-  inspectWorkbook(workbook, workbookPath, [map.sheets.acronyms, map.sheets.words]);
-  const acronyms = readSheet(workbook, map.sheets.acronyms, map.columns);
-  const words = readSheet(workbook, map.sheets.words, map.columns);
-  const collisions = caseFoldCollisions(acronyms, words);
-  assertAllowedCaseFoldCollisions(map, familyName, collisions);
-  const outputs = [
-    ["acronyms", acronyms],
-    ["words", words],
-  ];
-
-  const replacements = [];
-  for (const [kind, payload] of outputs) {
-    const outputPath = assertWithinProgram(familyConfig.runtime[kind], `${familyName} ${kind} runtime`);
-    const expected = `${JSON.stringify(payload, null, 2)}\n`;
-    if (checkOnly) {
-      if (!fs.existsSync(outputPath)) throw new Error(`Missing runtime glossary: ${outputPath}`);
-      const actual = fs.readFileSync(outputPath, "utf8").replace(/^\uFEFF/, "").replace(/\r\n/g, "\n");
-      if (actual !== expected) {
-        throw new Error(`${familyName} ${kind}.json is stale; rebuild it from Glossary.xlsx.`);
-      }
-    } else {
-      if (path.resolve(outputPath).toLowerCase() === workbookPath.toLowerCase()) throw new Error("Runtime output cannot overwrite the authoring workbook.");
-      replacements.push({ filePath: outputPath, data: expected, options: "utf8" });
-    }
+  const { workbookPath, acronyms, words, collisions, replacements } = checkOnly
+    ? assertFamilyCurrent(map, familyName, familyConfig) : compileFamily(map, familyName, familyConfig);
+  for (const replacement of replacements) {
+    if (path.resolve(replacement.filePath).toLowerCase() === workbookPath.toLowerCase()) throw new Error("Runtime output cannot overwrite the authoring workbook.");
   }
   if (!checkOnly) commitFileSetWithJournalSync(journalPath, replacements);
 
@@ -197,7 +225,8 @@ async function main() {
     console.log("Approved glossary entries remain authoritative. This guidance is for new or explicitly requested glossary revisions; the builder does not restyle approved terms.");
     return;
   }
-  const map = readJson(MAP_PATH, "book/glossary map");
+  const mapPath = args.map ? assertWithinProgram(args.map, "book/glossary map") : MAP_PATH;
+  const map = readJson(mapPath, "book/glossary map");
   if (map.schemaVersion !== 1 || map.glossaryContractVersion !== 2) {
     throw new Error(`Unsupported glossary map version in ${MAP_PATH}.`);
   }
@@ -219,4 +248,4 @@ if (require.main === module) main().catch((error) => {
   console.error(`GLOSSARY_BUILD_FAILED|${error.message}`);
   process.exitCode = 1;
 });
-module.exports = { buildFamily };
+module.exports = { buildFamily, compileFamily, assertFamilyCurrent };

@@ -10,7 +10,19 @@ The pipeline source code, tests, and documentation are released under the
 
 ## Data and content
 
-Everything under `03 Translate Diagrams/Ledgers/`, and every other file that
+### Published glossary reference permission
+
+The owner-approved entries in
+`01 Translate Glossaries/Published/Translation-Glossaries.json` may be used as
+translation references with this pipeline, including downloaded and forked
+copies. Copyright remains with Matthew Luke Publishing. This specific
+permission does not license book manuscripts, artwork or other production
+content, and does not change the source code's MIT License.
+
+### Other content
+
+Except for the specific glossary-reference permission above, everything under
+`03 Translate Diagrams/Ledgers/`, and every other file that
 records diagram text, book text, glossary terms, translations, captions, or
 production content, is published content:
 

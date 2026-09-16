@@ -6,18 +6,19 @@
  *
  * What it does
  * 1. Requires a text-source choice, then prompts for a folder containing .ai files
- * 2. Launches Illustrator ONCE for the whole batch
- * 3. A persistent controller JSX runs inside Illustrator
- * 4. For each .ai file:
+ * 2. In ledger mode, translates pending text in multi-diagram batches first
+ * 3. Launches Illustrator ONCE for the whole batch
+ * 4. A persistent controller JSX runs inside Illustrator
+ * 5. For each .ai file:
  *    - controller invokes the worker JSX against that file
  *    - Illustrator scans Open Sans / Source Code Pro runs and writes scan JSON
- *    - Node makes one ChatGPT-authenticated Codex subscription query per diagram
+ *    - Node supplies prepared translations (or queries scanned text in extraction mode)
  *    - Node writes translation JSON
  *    - Illustrator saves a separate staged file and closes its owned document
  *    - Node publishes it transactionally if the original is unchanged
- * 5. Any failure stops the batch without killing Illustrator or retrying a save
- * 6. Staged output and diagnostics remain available for recovery
- * 7. Failures are logged to a .txt file
+ * 6. Any failure stops the batch without killing Illustrator or retrying a save
+ * 7. Staged output and diagnostics remain available for recovery
+ * 8. Failures are logged to a .txt file
  */
 
 const fs = require("fs");
@@ -28,6 +29,7 @@ const os = require("os");
 const crypto = require("crypto");
 const readline = require("readline");
 const { spawn, spawnSync } = require("child_process");
+const { buildLedgerGlossary, matchesTerm, ledgerScan, packDiagramScans, compactQuery, expandResponse } = require("./DiagramTranslationPlan.cjs");
 const { pathToFileURL } = require("url");
 const {
   writeFileAtomicSync,
@@ -45,6 +47,7 @@ const {
 } = require("./DiagramResources.cjs");
 const {
   defaultLedgerPath,
+  hashFile,
   indexByHash,
   loadLedger,
   matchDiagram,
@@ -64,6 +67,9 @@ let GLOSSARY_RESOURCES = null;
 let SYMBOL_RUNTIME = null;
 let LEDGER = null;
 let LEDGER_PATH = "";
+let PREPARED_LEDGER_TRANSLATIONS = null;
+let RESOURCE_HASHES = null;
+const PERFORMANCE = { modelQueries: 0, promptCharacters: 0 };
 const REASONING_EFFORT = "xhigh";
 const MAX_SUBSCRIPTION_RETRIES = 3;
 const CODEX_QUERY_TIMEOUT_MS = 60 * 60 * 1000;
@@ -571,7 +577,7 @@ function makeInputItems(scanPayload) {
     const acronymLocks = buildRelevantAcronymLocks(replaced.text, glossaryMatches);
     const lockedText = applyAcronymLocksToText(replaced.text, acronymLocks);
 
-    return {
+    const item = {
       id: String(run.id),
       sourceText,
       text: lockedText,
@@ -584,17 +590,48 @@ function makeInputItems(scanPayload) {
       lockedAcronyms: acronymLocks,
       skipTranslation: shouldSkipTranslation(core),
     };
+    item.localTranslation = deterministicTranslation(item);
+    return item;
   });
+}
+
+function deterministicTranslation(item) {
+  if (item.skipTranslation) return item.sourceText;
+  const sourceKey = normalizeLookupKey(item.sourceText);
+  if ((GLOSSARY_RESOURCES?.contextualGlossary || []).some(entry => normalizeLookupKey(entry.source) === sourceKey)) return null;
+  const exact = item.glossaryMatches.filter(entry => entry.source === item.sourceText);
+  const targets = new Set(exact.map(entry => entry.target));
+  if (targets.size !== 1) return null;
+  const target = [...targets][0];
+  // Bypass the model only when normal glossary replacement already produced
+  // the exact mandated term. Nested/conflicting locks still go to the model.
+  if (restoreAcronymLocksInText(item.text, item.lockedAcronyms) !== target || countLineBreaks(item.text) !== item.originalLineBreakCount) return null;
+  return item.text;
 }
 
 function buildDelimitedPrompt(scanPayload) {
   const targetLanguage = trimString(scanPayload.targetLanguage || TARGET_LANGUAGE);
   const glossary = makeGlossarySection(scanPayload);
   const items = makeInputItems(scanPayload);
+  const itemPayloads = new Map(items.map(item => [item.id, {
+    id: item.id, text: item.text,
+    ...(item.lockedAcronyms.length ? { locked_acronyms: item.lockedAcronyms } : {}),
+  }]));
+  const contexts = scanPayload.diagramContext || [{
+    name: "Diagram", units: items.map(item => ({ id: item.id, text: item.sourceText })),
+  }];
+  const diagrams = contexts.map(context => ({
+    name: context.name,
+    items: context.units.map(unit => itemPayloads.get(unit.id) || { context_only: unit.text }),
+  }));
+  const contextText = contexts.flatMap(context => context.units.map(unit => unit.text)).join("\n");
+  const contextualGlossary = (GLOSSARY_RESOURCES?.contextualGlossary || []).filter(entry => matchesTerm(contextText, entry.source));
 
   return [
-    "You are translating all text loads from one Illustrator diagram in a single batch.",
-    "The shared glossary applies to the entire diagram and is separate from the text items.",
+    "Translate the text items from the separately named Illustrator diagrams below in one batch.",
+    "Keep each diagram's context separate. Identical labels in different diagrams may have different meanings; do not force one translation across diagrams.",
+    "Items marked context_only are read-only surrounding source text; use them for meaning but do not return a translation for them.",
+    "The shared glossary and editorial rules apply to every diagram in this request.",
     "Contextual glossary entries describe alternative senses. Choose the sense from the English text and diagram context; never combine senses or add the explanatory definitions to the translation.",
     "Each item's text is the authoritative source to translate.",
     "Some glossary terms may already be pre-replaced into the target language inside item text.",
@@ -611,7 +648,7 @@ function buildDelimitedPrompt(scanPayload) {
           { id: "string", translated: "string" }
         ]
       }
-    }, null, 2),
+    }),
     "<<<END_SHARED_SCHEMA>>>",
     "",
     "<<<BEGIN_SHARED_GLOSSARY>>>",
@@ -624,8 +661,8 @@ function buildDelimitedPrompt(scanPayload) {
         "Some glossary terms may already appear in target-language form inside the item text. Keep them exactly."
       ],
       shared_glossary: glossary,
-      contextual_glossary: GLOSSARY_RESOURCES?.contextualGlossary || []
-    }, null, 2),
+      contextual_glossary: contextualGlossary
+    }),
     "<<<END_SHARED_GLOSSARY>>>",
     "",
     "<<<BEGIN_TEXT_ITEMS>>>",
@@ -640,28 +677,11 @@ function buildDelimitedPrompt(scanPayload) {
         "Preserve punctuation, numbering, and formatting inside each item.",
         "Preserve internal line breaks exactly.",
         "Do not collapse multi-line text into one line.",
-        "If skipTranslation is true, return the item text unchanged.",
         "Preserve every locked acronym placeholder exactly and do not expand, translate, or remove it.",
         "Return translations only in the required JSON schema."
       ],
-      items: items.map((item) => {
-        const payload = {
-          id: item.id,
-          text: item.text,
-          skipTranslation: item.skipTranslation,
-        };
-
-        if (item.appliedGlossaryReplacements.length) {
-          payload.applied_glossary_replacements = item.appliedGlossaryReplacements;
-        }
-
-        if (item.lockedAcronyms.length) {
-          payload.locked_acronyms = item.lockedAcronyms;
-        }
-
-        return payload;
-      })
-    }, null, 2),
+      diagrams
+    }),
     "<<<END_TEXT_ITEMS>>>"
   ].join("\n");
 }
@@ -775,6 +795,8 @@ async function translateDiagramOnce(scanPayload, statePaths) {
     });
     try {
       removeFileIfExists(statePaths.codexResponseJson);
+      PERFORMANCE.modelQueries++;
+      PERFORMANCE.promptCharacters += prompt.length;
       const run = runCodex([
         "exec", "-",
         "--model", MODEL,
@@ -809,6 +831,81 @@ async function translateDiagramOnce(scanPayload, statePaths) {
   }
 
   throw lastErr;
+}
+
+async function translateEfficientDiagram(scanPayload, statePaths) {
+  const plan = compactQuery(scanPayload, makeInputItems(scanPayload));
+  const response = plan.query.runs.length
+    ? await translateDiagramOnce(plan.query, statePaths)
+    : { translations: [] };
+  const expanded = expandResponse(plan, response);
+  validateTranslations(scanPayload, expanded);
+  return expanded;
+}
+
+function assertDiagramResourcesCurrent() {
+  for (const [file, expected] of RESOURCE_HASHES || []) {
+    if (hashFile(file) !== expected) throw new Error("Diagram glossary inputs changed during this run; stop and prepare again.");
+  }
+  if (LEDGER && hashFile(LEDGER.filePath) !== LEDGER.sha256) {
+    throw new Error("Diagram ledger changed during this run; stop and prepare again.");
+  }
+  editorialRules.editorialPrompt(TARGET_LANGUAGE, "diagram", EDITORIAL_POLICY?.sha256);
+}
+
+async function prepareLedgerTranslations(entries, tempRoot) {
+  const pairs = buildLedgerGlossary(readJson(GLOSSARY_RESOURCES.wordsJson), readJson(GLOSSARY_RESOURCES.acronymsJson), GLOSSARY_RESOURCES.glossaryTermKey);
+  const prepared = new Map();
+  const pending = [];
+  let reused = 0;
+  let unchanged = 0;
+  let glossaryOnly = 0;
+  for (const entry of new Set(entries)) {
+    const scan = ledgerScan(entry, TARGET_LANGUAGE, pairs);
+    const known = translationsForLanguage(entry, TARGET_LANGUAGE);
+    const translations = new Map();
+    const runs = [];
+    const items = makeInputItems(scan);
+    for (let i = 0; i < scan.runs.length; i++) {
+      const run = scan.runs[i];
+      const item = items[i];
+      if (known.has(run.id)) { translations.set(run.id, known.get(run.id)); reused++; }
+      else if (typeof item.localTranslation === "string") {
+        translations.set(run.id, `${item.leadingWhitespace}${restoreAcronymLocksInText(item.localTranslation, item.lockedAcronyms)}${item.trailingWhitespace}`);
+        if (item.skipTranslation) unchanged++; else glossaryOnly++;
+      }
+      else runs.push(run);
+    }
+    prepared.set(entry, { scan, translations });
+    pending.push({ ...scan, runs });
+  }
+  const batches = packDiagramScans(pending);
+  console.log(`Preparing ${batches.length} model batch(es) before Illustrator opens; ${reused} ledger translations reused, ${unchanged} numeric-only and ${glossaryOnly} exact-glossary items handled locally.`);
+  const translatedById = new Map();
+  for (let i = 0; i < batches.length; i++) {
+    assertDiagramResourcesCurrent();
+    console.log(`Translation batch ${i + 1}/${batches.length}: ${batches[i].diagramContext.length} diagrams, ${batches[i].runs.length} text items.`);
+    const payload = await translateEfficientDiagram(batches[i], makePerFilePaths(tempRoot, `ledger-batch-${i + 1}`));
+    const restored = sortTranslationsLikeRuns(batches[i], payload);
+    for (const row of restored.translations) translatedById.set(row.id, row.translated);
+  }
+  for (const { scan, translations } of prepared.values()) {
+    for (const run of scan.runs) {
+      if (!translations.has(run.id)) {
+        if (!translatedById.has(run.id)) throw new Error(`Prepared batch omitted diagram text ${run.id}.`);
+        translations.set(run.id, translatedById.get(run.id));
+      }
+    }
+  }
+  assertDiagramResourcesCurrent();
+  // Retain bounded recovery evidence in the existing run scratch directory;
+  // the public ledger is still updated only after the corresponding artwork saves.
+  writeJson(path.join(tempRoot, "prepared-ledger-translations.json"), {
+    model: MODEL, reasoningEffort: REASONING_EFFORT, ledgerSha256: LEDGER.sha256,
+    performance: PERFORMANCE,
+    diagrams: [...prepared].map(([entry, value]) => ({ file: entry.file, sha256: entry.sha256, translations: Object.fromEntries(value.translations) })),
+  });
+  return prepared;
 }
 
 function validateTranslations(scanPayload, translationPayload) {
@@ -873,7 +970,7 @@ function validateTranslations(scanPayload, translationPayload) {
   }
 }
 
-function sortTranslationsLikeRuns(scanPayload, translationPayload) {
+function sortTranslationsLikeRuns(scanPayload, translationPayload, { alreadyFinal = false } = {}) {
   const byId = {};
   for (const row of translationPayload.translations) {
     byId[String(row.id)] = row;
@@ -889,18 +986,21 @@ function sortTranslationsLikeRuns(scanPayload, translationPayload) {
       const item = inputItems[idx];
       let translatedCore = String(byId[String(run.id)].translated || "");
 
-      translatedCore = restoreAcronymLocksInText(translatedCore, item.lockedAcronyms || []);
-      translatedCore = convertLineBreaks(
-        translatedCore,
-        item.originalLineBreakStyle || "\r"
-      );
+      if (!alreadyFinal) {
+        translatedCore = restoreAcronymLocksInText(translatedCore, item.lockedAcronyms || []);
+        translatedCore = convertLineBreaks(
+          translatedCore,
+          item.originalLineBreakStyle || "\r"
+        );
+        translatedCore = `${item.leadingWhitespace}${translatedCore}${item.trailingWhitespace}`;
+      }
 
       return {
         id: String(run.id),
         frameIndex: run.frameIndex,
         start: run.start,
         length: run.length,
-        translated: `${item.leadingWhitespace}${translatedCore}${item.trailingWhitespace}`
+        translated: translatedCore
       };
     })
   };
@@ -1343,6 +1443,7 @@ async function processFileInSession({
   tempRoot,
   sessionErrorJson,
 }) {
+  assertDiagramResourcesCurrent();
   const stem = makeTempStem(aiFile);
   const perFile = makePerFilePaths(tempRoot, stem);
 
@@ -1439,13 +1540,19 @@ async function processFileInSession({
     });
 
     const finalModelResolution = await resolveSubscriptionModel(MODEL);
+    assertDiagramResourcesCurrent();
     writeJson(`${perFile.translateJson}.publication.json`, { publication, finalModelResolution });
     publishDiagram(publication);
     console.log("Done.");
     return;
   }
 
-  const knownTranslations = ledgerEntry ? translationsForLanguage(ledgerEntry, TARGET_LANGUAGE) : new Map();
+  const prepared = ledgerEntry ? PREPARED_LEDGER_TRANSLATIONS?.get(ledgerEntry) : null;
+  if (ledgerEntry && !prepared) throw new Error("Ledger translations were not prepared before Illustrator started.");
+  if (prepared && JSON.stringify(makeInputItems(scanData)) !== JSON.stringify(makeInputItems(prepared.scan))) {
+    throw new Error("Illustrator's matched text or glossary differs from the prepared translation inputs; no translation will be applied.");
+  }
+  const knownTranslations = prepared ? prepared.translations : new Map();
   const reusedTranslations = [];
   const pendingRuns = [];
   for (const run of runs) {
@@ -1457,25 +1564,24 @@ async function processFileInSession({
   let modelTranslations = [];
   if (pendingRuns.length) {
     if (ledgerEntry) {
-      console.log(
-        `Found ${runs.length} ledger text items; translating ${pendingRuns.length} ` +
-        `through the Codex subscription (${reusedTranslations.length} reused from the ledger)...`
-      );
+      throw new Error("Prepared ledger translations are incomplete; no fallback model query is allowed during application.");
     } else {
       console.log(`Found ${runs.length} Open Sans text runs. Translating through the Codex subscription...`);
     }
-    const modelPayload = await translateDiagramOnce({ ...scanData, runs: pendingRuns }, perFile);
+    const modelPayload = await translateEfficientDiagram({ ...scanData, runs: pendingRuns }, perFile);
     modelTranslations = Array.isArray(modelPayload.translations) ? modelPayload.translations : [];
   } else {
     console.log(
       `Found ${runs.length} ledger text items; every one already has a ${TARGET_LANGUAGE} ` +
-      "translation recorded in the ledger."
+      "translation prepared for application."
     );
   }
 
   const translationPayload = { translations: [...reusedTranslations, ...modelTranslations] };
-  const finalPayload = sortTranslationsLikeRuns(scanData, translationPayload);
-  await resolveSubscriptionModel(MODEL);
+  // Prepared and approved ledger translations already contain their exact
+  // boundary whitespace and restored locks; only attach the matched locators.
+  const finalPayload = sortTranslationsLikeRuns(scanData, translationPayload, { alreadyFinal: !!prepared });
+  assertDiagramResourcesCurrent();
 
   writeJson(perFile.translateJson, finalPayload);
 
@@ -1499,6 +1605,7 @@ async function processFileInSession({
   }
 
   const finalModelResolution = await resolveSubscriptionModel(MODEL);
+  assertDiagramResourcesCurrent();
   writeJson(`${perFile.translateJson}.publication.json`, { publication, finalModelResolution });
   publishDiagram(publication);
   persistLedgerTranslations(ledgerEntry, finalPayload);
@@ -1578,6 +1685,9 @@ async function main() {
     targetLanguage: TARGET_LANGUAGE,
     glossaryProfile: GLOSSARY_PROFILE,
   });
+  RESOURCE_HASHES = new Map([
+    GLOSSARY_RESOURCES.wordsJson, GLOSSARY_RESOURCES.acronymsJson, GLOSSARY_RESOURCES.symbolsWorkbook,
+  ].map(file => [file, hashFile(file)]));
   SYMBOL_RUNTIME = buildAcronymSymbolsRuntime(
     GLOSSARY_RESOURCES.symbolsWorkbook,
     GLOSSARY_RESOURCES.targetLanguage,
@@ -1633,12 +1743,13 @@ async function main() {
     return;
   }
 
+  const selectedLedgerEntries = [];
   if (LEDGER_REQUESTED) {
     const ledgerIndex = indexByHash(LEDGER);
     const unmatched = [];
     for (const file of aiFiles) {
       try {
-        matchDiagram(LEDGER, file, ledgerIndex);
+        selectedLedgerEntries.push(matchDiagram(LEDGER, file, ledgerIndex).entry);
       } catch (error) {
         unmatched.push(`${path.basename(file)}: ${error.message}`);
       }
@@ -1656,6 +1767,7 @@ async function main() {
   ensureDir(resourceDir);
   GLOSSARY_RESOURCES.symbolsJson = path.join(resourceDir, "diagram-acronym-symbols.json");
   writeJson(GLOSSARY_RESOURCES.symbolsJson, SYMBOL_RUNTIME);
+  RESOURCE_HASHES.set(GLOSSARY_RESOURCES.symbolsJson, hashFile(GLOSSARY_RESOURCES.symbolsJson));
 
   const failureLogPath = makeFailureLogPath(tempRoot);
   const sessionPaths = makeSessionPaths(tempRoot);
@@ -1698,11 +1810,17 @@ async function main() {
   let session = null;
   let successCount = 0;
   let failureCount = 0;
+  const batchStarted = Date.now();
 
   const getSession = () => session;
   const setSession = (value) => { session = value; };
 
   try {
+    if (LEDGER_REQUESTED) {
+      PREPARED_LEDGER_TRANSLATIONS = await prepareLedgerTranslations(selectedLedgerEntries, tempRoot);
+      // All translation queries complete before the single Adobe session starts.
+      await resolveSubscriptionModel(MODEL);
+    }
     session = await startIllustratorSession({
       illustratorExe,
       controllerJsxPath: sessionPaths.controllerJsxPath,
@@ -1748,6 +1866,12 @@ async function main() {
     ]);
     assertBatchSucceeded(failureCount, aiFiles.length, failureLogPath);
   } finally {
+    try {
+      writeJson(path.join(tempRoot, "performance.json"), { ...PERFORMANCE, sourceMode, elapsedMs: Date.now() - batchStarted });
+      console.log(`DIAGRAM_BATCH_PERFORMANCE|queries=${PERFORMANCE.modelQueries}|promptCharacters=${PERFORMANCE.promptCharacters}|elapsedMs=${Date.now() - batchStarted}`);
+    } catch {
+      console.warn("Could not save the performance summary; controller shutdown will still proceed.");
+    }
     try {
       writeJson(sessionPaths.stopJson, {
         stop: true,

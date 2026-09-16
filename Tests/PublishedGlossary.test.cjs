@@ -139,5 +139,6 @@ test("text preparation checks the source and snapshots contextual data; both que
   assert.match(diagram, /assertFamilyCurrent\(map/);
   assert.match(diagram, /readContextualGlossary\(/);
   const controller = fs.readFileSync(path.join(ROOT, "03 Translate Diagrams/Code/Illustrator_Translate_Diagrams_Batch.cjs"), "utf8");
-  assert.match(controller, /contextual_glossary: GLOSSARY_RESOURCES\?\.contextualGlossary/);
+  assert.match(controller, /GLOSSARY_RESOURCES\?\.contextualGlossary/);
+  assert.match(controller, /contextual_glossary: contextualGlossary/);
 });

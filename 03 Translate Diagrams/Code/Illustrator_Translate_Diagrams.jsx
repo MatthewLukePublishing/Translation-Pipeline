@@ -860,42 +860,50 @@ if (typeof JSON === "undefined") {
     return out;
   }
 
-  function applyTextReplacement(tf, startIndex, length, newText) {
-    var endIndex = startIndex + length;
-    var contents = tf.contents;
-
-    if (startIndex < 0 || length < 0 || endIndex > contents.length) {
-      throw new Error(
-        "Invalid replacement range. start=" + startIndex +
-        ", length=" + length +
-        ", contents.length=" + contents.length
-      );
-    }
-
-    var before = contents.substring(0, startIndex);
-    var after = contents.substring(endIndex);
-    tf.contents = before + normalizeIllustratorLineBreaks(newText) + after;
-  }
-
   function applyTranslations(doc, allItems) {
     var issues = [];
     sortDescendingByStart(allItems);
-
+    var plans = [];
+    var current = null;
+    // Preflight all ranges using one contents read per affected frame. Build
+    // each final string in memory, then perform at most one Adobe DOM write.
     for (var i = 0; i < allItems.length; i++) {
       var item = allItems[i];
-
       try {
-        var tf = doc.textFrames[item.frameIndex];
-        if (!tf) {
-          issues.push("Missing text frame for item id " + item.id + " at frame index " + item.frameIndex);
-          continue;
+        if (typeof item.frameIndex !== "number" || item.frameIndex < 0 || Math.floor(item.frameIndex) !== item.frameIndex) {
+          throw new Error("Invalid text frame index.");
         }
-        applyTextReplacement(tf, item.start, item.length, item.translated);
+        if (!current || current.frameIndex !== item.frameIndex) {
+          var tf = doc.textFrames[item.frameIndex];
+          if (!tf) throw new Error("Missing text frame.");
+          var original = tf.contents;
+          current = { frameIndex: item.frameIndex, frame: tf, original: original, result: original, previousStart: original.length };
+          plans.push(current);
+        }
+        var end = item.start + item.length;
+        if (typeof item.start !== "number" || typeof item.length !== "number" ||
+            Math.floor(item.start) !== item.start || Math.floor(item.length) !== item.length ||
+            item.start < 0 || item.length <= 0 || end > current.original.length || end > current.previousStart) {
+          throw new Error("Invalid or overlapping text replacement range.");
+        }
+        if (typeof item.translated !== "string") throw new Error("Translation must be a string.");
+        current.result = current.result.substring(0, item.start) + normalizeIllustratorLineBreaks(item.translated) + current.result.substring(end);
+        current.previousStart = item.start;
       } catch (e) {
-        issues.push("Failed to apply item id " + item.id + ": " + e.message);
+        issues.push("Invalid replacement for item id " + item.id + ": " + e.message);
       }
     }
-
+    if (issues.length) return issues;
+    for (var j = 0; j < plans.length; j++) {
+      var planned = plans[j];
+      if (planned.result === planned.original) continue;
+      try {
+        planned.frame.contents = planned.result;
+      } catch (writeError) {
+        issues.push("Failed to apply text frame " + planned.frameIndex + ": " + writeError.message);
+        break;
+      }
+    }
     return issues;
   }
 

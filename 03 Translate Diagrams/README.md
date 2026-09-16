@@ -2,10 +2,11 @@
 
 Stage 3 translates text recursively across a selected folder of Adobe Illustrator files.
 
-Requests include only the diagram-relevant shared editorial rules and the
-selected language's conventions. The job records the policy hash, and each
-request verifies it again. If a book has no diagrams, skip this stage entirely;
-do not create or edit artwork merely to satisfy the pipeline sequence.
+Each model request carries the complete diagram-relevant shared editorial rules
+and the selected language's conventions once, shared by every diagram in that
+request. The job records the policy hash, and each request verifies it again. If
+a book has no diagrams, skip this stage entirely; do not create or edit artwork
+merely to satisfy the pipeline sequence.
 
 - `Code/Illustrator_Translate_Diagrams_Batch.cjs` is the Node.js controller.
 - `Code/Illustrator_Translate_Diagrams.jsx` is the Illustrator worker launched by the controller.
@@ -56,6 +57,17 @@ Choose the source up front instead of answering the prompt:
 guess when it cannot ask. `AI_DIAGRAM_LEDGER` sets only the ledger path, so it
 never selects the ledger source by itself.
 
+Both sources share the same request handling: compact JSON prompts, short
+temporary ids that are mapped back strictly to the original diagram and item
+ids, and numeric-only labels completed locally instead of being sent for
+translation. An exact, case-sensitive full glossary label is completed locally
+too, but only when its target is unique, no contextual sense applies, and the
+ordinary glossary and acronym-lock processing already yields that exact target.
+Phrases, changed case, conflicting or nested locks, and ambiguous terms stay
+with the model. Ledger mode groups the pending text into bounded multi-diagram
+requests before Illustrator starts; extraction mode keeps its per-diagram
+request workflow.
+
 ```powershell
 $env:AI_TARGET_LANGUAGE = 'German'
 $env:AI_BOOK = 'FPST'
@@ -74,23 +86,52 @@ translated from that record instead of exporting the text again. The ledger
 defaults to `Ledgers/<BOOK>-Diagram-Text-Ledger.json`; use `--ledger=<path>` or
 `AI_DIAGRAM_LEDGER` for another location.
 
-What changes in ledger mode:
+Ledger mode translates the pending text in bounded multi-diagram requests
+before Illustrator starts, then applies each result to its own diagram:
+
+- A request covers several diagrams of one book and language. It closes at the
+  first limit reached: 8 diagrams, 160 pending items, or 24,000 serialized
+  source characters. A single diagram larger than a limit still goes as one
+  standalone request, so no diagram is ever split across requests. These are
+  internal defaults, not user settings.
+- Each request carries the complete language and editorial rules once, shared by
+  every diagram in it. Diagram context stays separate: items keep their own
+  diagram and occurrence identity, and identical strings in different diagrams
+  or positions are never merged into one occurrence.
+- Numeric-only labels are completed locally and are not sent for translation,
+  including inside a mixed request that also holds real prose.
+- The model answers with short temporary ids, which are mapped back strictly to
+  the original diagram and item ids before any text is applied.
+- Prompts are compact JSON, and contextual glossary senses travel only with the
+  terms they explain.
+
+What stays the same in ledger mode:
 
 - The ledger is authoritative for source text. Every input diagram must still
   match the hash recorded for it, so start each language from a pristine copy of
   the recorded source. A revised or already translated diagram stops the run
   before Illustrator is launched.
-- The worker locates each ledger line in the document and verifies it, instead
-  of exporting text from the artwork. A line that has moved, changed, or gone
-  missing stops the run: nothing is applied and no file is published.
-- Only text without a recorded translation for the target language is sent to
-  the model. Re-running a language after editing its translations in the ledger
+- The one Illustrator session still opens each diagram, locates every recorded
+  line in the artwork, and verifies it instead of exporting the text. A line
+  that has moved, changed, or gone missing stops the run: nothing is applied and
+  no file is published. Batch translation does not remove those artwork reads,
+  and native rendering still needs the desktop check.
+- Within that session the worker preflights every replacement range before it
+  changes anything, builds each frame's final text in memory, and writes a
+  changed frame once; a frame whose text does not change is left unassigned. The
+  resulting text is unchanged; only the number of DOM writes drops. Native
+  Illustrator font, layout, and timing behaviour has not been benchmarked, so no
+  Adobe speedup is claimed.
+- Only text without a recorded translation for the target language is
+  translated; approved translations already recorded in the ledger are reused
+  unchanged. Re-running a language after editing its translations in the ledger
   re-applies the reviewed text instead of paying for another query.
-- Translations are written back into the ledger after each diagram is
-  published, guarded against concurrent edits. Commit the ledger with the run
-  that produced it.
-  Version 1.4.1 corrects the write-back to use that diagram's matched entry;
-  an offline regression verifies other diagrams remain unchanged.
+- Translations are written back into the ledger only after that diagram's
+  artwork has been published, never on the model response alone, and the write
+  is guarded against concurrent edits. Commit the ledger with the run that
+  produced it. Version 1.4.1 corrected the write-back to use that diagram's
+  matched entry; an offline regression verifies other diagrams remain
+  unchanged.
 - Text classified as prose — Open Sans, ChakraPetch and League Gothic — is
   translated. Source Code Pro text continues to resolve from the acronym-symbol
   workbook. The legacy scanner recognises the same prose families.
@@ -124,3 +165,14 @@ node '.\03 Translate Diagrams\Code\Illustrator_Translate_Diagrams_Batch.cjs' --c
 ```
 
 The controller discovers `.ai` files in nested folders, runs one Illustrator session, and returns a failed process result if any diagram fails. It uses only the ChatGPT-authenticated Codex subscription. Before each model request and retry, it freshly queries OpenAI's official frontier metadata and the live subscription catalog, verifies the exact model and `xhigh`, and records the resolution. Failed discovery, an unavailable frontier, or a model change stops the entire run without another model query or file retry. No bundled/local model catalog, paid API credentials, or fallback model is accepted. See the root README for live-discovery requirements. Reference workbooks, Adobe files, generated scans, translations, logs, and temporary files are local-only inputs or outputs.
+
+Recovery evidence and the run's `performance.json` stay in private run scratch.
+That file records the query count, prompt character count, and elapsed
+milliseconds; it is not an exact token count, and the program publishes no
+translation or Adobe timing benchmark.
+
+Offline evidence from the checked-in FPST ledger and the published French
+glossary: the older plan produced 109 one-diagram requests, where the batched
+plan needs 19 requests, and it sends 1,521 model-translated items instead of
+1,963 model output items. No diagram translation was actually run for these
+figures, and the character counts behind them are not token counts.

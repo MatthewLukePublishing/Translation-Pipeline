@@ -93,9 +93,9 @@ node '.\01 Translate Glossaries\Code\Shared\Build_Glossary_Runtime.cjs' --check
 node '.\03 Translate Diagrams\Code\Illustrator_Translate_Diagrams_Batch.cjs'
 
 # Choose the source instead of answering the prompt. --ledger reuses the book's
-# recorded ledger: no text export, one Illustrator session, and only
-# untranslated text is sent to the model. --extract exports the text from the
-# artwork.
+# recorded ledger: no text export, one Illustrator session, and only pending text
+# is translated, in bounded multi-diagram requests before Illustrator starts.
+# --extract exports the text from the artwork, one request per diagram.
 node '.\03 Translate Diagrams\Code\Illustrator_Translate_Diagrams_Batch.cjs' --ledger
 node '.\03 Translate Diagrams\Code\Illustrator_Translate_Diagrams_Batch.cjs' --extract
 
@@ -116,8 +116,12 @@ Protected source sections and book-specific terminology take precedence.
 - Glossary authoring: `Build_Glossary_Runtime.cjs --rules French` prints only the
   applicable glossary guidance. Building runtime JSON never restyles approved terms.
 - Text, diagrams and captions: prompts receive their own stage's rules and a policy
-  hash. Text/caption postprocessing normalizes applicable date and symbol spacing;
-  text QA checks mechanical typography outside protected source and glossary locks.
+  hash. A diagram request carries those rules once for every diagram in its batch
+  while each diagram keeps its own context. Exact case-sensitive glossary labels
+  are applied locally when the target is unambiguous, and the Illustrator worker
+  preflights replacement ranges and writes each changed frame once. Text/caption
+  postprocessing normalizes applicable date and symbol spacing; text QA checks
+  mechanical typography outside protected source and glossary locks.
 - ICML import: the workbook must have passed QA under the current policy. The
   recoverable import changes matching Content IDs, then runs every applicable
   spacing formula directly on ICML text before writing the files. Adjacent style

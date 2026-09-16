@@ -44,6 +44,8 @@ What changes in ledger mode:
 - Translations are written back into the ledger after each diagram is
   published, guarded against concurrent edits. Commit the ledger with the run
   that produced it.
+  Version 1.4.1 corrects the write-back to use that diagram's matched entry;
+  an offline regression verifies other diagrams remain unchanged.
 - Text classified as prose — Open Sans, ChakraPetch and League Gothic — is
   translated. Source Code Pro text continues to resolve from the acronym-symbol
   workbook. The legacy scanner recognises the same prose families.

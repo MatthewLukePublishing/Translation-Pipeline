@@ -2,8 +2,10 @@
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const { createRequire } = require("node:module");
 const path = require("node:path");
 const test = require("node:test");
+const vm = require("node:vm");
 const ROOT = path.resolve(__dirname, "..");
 const {
   DiagramLedgerError,
@@ -224,4 +226,108 @@ test("the ledger writer is the only writer and never leaves a partial file", () 
   assert.equal(parsed.diagrams[0].textUnits[0].plain, "Scenario");
   assert.equal(fs.readFileSync(ledgerPath, "utf8"), text);
   assert.throws(() => loadLedger(path.join(root, "missing.json")), DiagramLedgerError);
+}));
+
+const CONTROLLER = path.join(ROOT, "03 Translate Diagrams", "Code", "Illustrator_Translate_Diagrams_Batch.cjs");
+
+// Evaluate the real controller source in a vm so the ledger persistence helper
+// is exercised exactly as shipped. The controller runs main() only when it is
+// the entry module, and the vm supplies its own `module`, so requiring it here
+// neither prompts nor launches Illustrator. The exposure glue is appended in
+// memory; the controller file itself is never modified by this test.
+function loadControllerHarness() {
+  const source = fs.readFileSync(CONTROLLER, "utf8").replace(/^#!.*\r?\n/, "");
+  const fakeProcess = Object.create(process);
+  fakeProcess.argv = [process.execPath, CONTROLLER];
+  fakeProcess.env = process.env;
+  const sandbox = {
+    require: createRequire(CONTROLLER),
+    module: { exports: {} },
+    __dirname: path.dirname(CONTROLLER),
+    __filename: CONTROLLER,
+    process: fakeProcess,
+    console,
+    Buffer,
+    URL,
+    URLSearchParams,
+    TextDecoder,
+    TextEncoder,
+    setTimeout,
+    clearTimeout,
+    setInterval,
+    clearInterval,
+  };
+  sandbox.exports = sandbox.module.exports;
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${source}
+module.exports.__diagramLedgerHarness = {
+  persistLedgerTranslations,
+  setDiagramLedgerState(state) {
+    LEDGER = state.ledger;
+    TARGET_LANGUAGE = state.language;
+    if (state.requested !== undefined) LEDGER_REQUESTED = state.requested;
+  },
+};
+`,
+    sandbox,
+    { filename: CONTROLLER },
+  );
+  return sandbox.module.exports.__diagramLedgerHarness;
+}
+
+test("ledger persistence writes only the matched diagram entry and reloads it", () => fixture(root => {
+  const { ledgerPath } = makeSource(root, { diagrams: [
+    { file: "1_-_Example.ai", bytes: "diagram one", units: [
+      { id: "1_-_Example#0001", font: "OpenSans-SemiBold", kind: "prose", text: "Scenario\n", plain: "Scenario" },
+      { id: "1_-_Example#0002", font: "ChakraPetch-SemiBold", kind: "prose", text: "High\n", plain: "High" },
+    ] },
+    { file: "2_-_Example.ai", bytes: "diagram two", units: [
+      { id: "2_-_Example#0001", font: "OpenSans-SemiBold", kind: "prose", text: "Other\n", plain: "Other" },
+    ] },
+  ] });
+  const before = fs.readFileSync(ledgerPath, "utf8");
+  const ledger = loadLedger(ledgerPath, { book: "DEMO" });
+  const otherHash = ledger.diagrams[1].sha256;
+  const controller = loadControllerHarness();
+  controller.setDiagramLedgerState({ ledger, language: "German", requested: true });
+
+  const entry = ledger.diagrams[0];
+  controller.persistLedgerTranslations(entry, { translations: [
+    { id: "1_-_Example#0001", translated: "Szene" },
+    { id: "1_-_Example#0002", translated: "Hoch" },
+    { id: "2_-_Example#0001", translated: "belongs to another diagram" },
+  ] });
+
+  assert.notEqual(fs.readFileSync(ledgerPath, "utf8"), before, "the matched entry must be persisted");
+
+  const reloaded = loadLedger(ledgerPath, { book: "DEMO" });
+  assert.deepEqual(
+    [...translationsForLanguage(reloaded.diagrams[0], "German").entries()],
+    [["1_-_Example#0001", "Szene"], ["1_-_Example#0002", "Hoch"]],
+  );
+  assert.equal(reloaded.diagrams.length, 2);
+  assert.equal(reloaded.source.textUnitCount, 3);
+
+  // The diagram that was not selected keeps its hash, text, and empty translations.
+  assert.equal(reloaded.diagrams[1].sha256, otherHash);
+  assert.equal(reloaded.diagrams[1].textUnits[0].text, "Other\n");
+  assert.equal(reloaded.diagrams[1].textUnits[0].translations, undefined);
+  assert.equal(translationsForLanguage(reloaded.diagrams[1], "German").size, 0);
+}));
+
+test("ledger persistence stays inert without ledger mode or a matched entry", () => fixture(root => {
+  const { ledgerPath } = makeSource(root);
+  const ledger = loadLedger(ledgerPath, { book: "DEMO" });
+  const before = fs.readFileSync(ledgerPath, "utf8");
+  const controller = loadControllerHarness();
+  const translations = [{ id: "1_-_Example#0001", translated: "Scene" }];
+
+  controller.setDiagramLedgerState({ ledger, language: "German", requested: false });
+  controller.persistLedgerTranslations(ledger.diagrams[0], { translations });
+  assert.equal(fs.readFileSync(ledgerPath, "utf8"), before);
+
+  controller.setDiagramLedgerState({ ledger, language: "German", requested: true });
+  controller.persistLedgerTranslations(null, { translations });
+  assert.equal(fs.readFileSync(ledgerPath, "utf8"), before);
 }));

@@ -1285,9 +1285,9 @@ async function waitForControllerJobDone({
   });
 }
 
-function persistLedgerTranslations(finalPayload) {
-  if (!LEDGER_REQUESTED || !LEDGER || !finalPayload) return;
-  const changed = recordTranslations(LEDGER.entry, TARGET_LANGUAGE, finalPayload.translations);
+function persistLedgerTranslations(ledgerEntry, finalPayload) {
+  if (!LEDGER_REQUESTED || !LEDGER || !ledgerEntry || !finalPayload) return;
+  const changed = recordTranslations(ledgerEntry, TARGET_LANGUAGE, finalPayload.translations);
   if (!changed) return;
   const result = writeLedger(LEDGER, LEDGER.source, { language: TARGET_LANGUAGE });
   console.log(`Recorded ${changed} ${TARGET_LANGUAGE} translation(s) in ${result.filePath}.`);
@@ -1458,7 +1458,7 @@ async function processFileInSession({
   const finalModelResolution = await resolveSubscriptionModel(MODEL);
   writeJson(`${perFile.translateJson}.publication.json`, { publication, finalModelResolution });
   publishDiagram(publication);
-  persistLedgerTranslations(finalPayload);
+  persistLedgerTranslations(ledgerEntry, finalPayload);
   console.log("Done.");
 }
 

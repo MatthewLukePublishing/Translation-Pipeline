@@ -2,7 +2,10 @@
 
 Translation Pipeline is a Windows-oriented publishing workflow for glossary maintenance, ICML text translation, Illustrator diagram text, and spreadsheet-based comic captions. It treats each translation as an auditable job, validates content identifiers and workbook integrity, and uses recoverable transactions when several related files must change together.
 
-The repository contains source code, synthetic examples, and offline tests. It intentionally excludes books, translations, glossary workbooks, Adobe files, production outputs, job records, reports, logs, credentials, and historical archives.
+The repository contains source code, synthetic examples, offline tests, and the
+owner-approved FPST diagram ledger and MFP/FPST glossary snapshot. Other books,
+translations, glossary workbooks, Adobe files, production outputs, job records,
+reports, logs, credentials, and historical archives remain excluded.
 
 ## Requirements
 
@@ -33,7 +36,8 @@ npm test
 
 ## Configure inputs
 
-All real inputs are local and ignored by Git. Start with the files under `examples`:
+Except for the explicitly published ledger and glossary snapshot, real inputs
+are local and ignored by Git. Start with the files under `examples`:
 
 1. Copy `examples/book_glossary_map.example.json` to `01 Translate Glossaries/book_glossary_map.json` and replace the `DEMO` paths with your own book resources.
 2. Create `01 Translate Glossaries/<family>/Glossary.xlsx` with `Acronyms` and `Words` worksheets. Each begins with `English`, `English Definition`, and paired term/definition columns for every target language.
@@ -41,6 +45,15 @@ All real inputs are local and ignored by Git. Start with the files under `exampl
 4. Put the source four-column workbook, ICML ZIP, and optional standard INDD under `02 Translate Text/Origin Files`.
 5. If the book needs mandatory terminology rules, copy `examples/book_translation_instructions.example.json` to `02 Translate Text/Book Instructions/<BOOK>.json` and reference it from the map.
 6. Set each book’s product paths in the map. You can also pass `-ProductsRoot` to the launcher or set `TRANSLATION_PRODUCTS_ROOT`.
+
+For MFP or FPST, `examples/book_glossary_map.published.json` can build the supplied
+glossaries without a private workbook or Google sign-in. Run the Stage 1 builder
+with `--map examples/book_glossary_map.published.json`, or merge its
+`publishedSource` and `runtime.contextual` settings into an existing local map.
+Keep existing base workbooks and other profiles. The published MFP French terms
+use **French Recommended**. See the [Stage 1 guide](01%20Translate%20Glossaries/README.md)
+for profile bindings, source precedence and refreshing the snapshot. It is not a
+live-sync connection; existing translation jobs remain pinned to their inputs.
 
 The four text-workbook headers are:
 

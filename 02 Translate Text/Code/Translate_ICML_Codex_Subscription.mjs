@@ -21,6 +21,7 @@ import { buildContentGroups } from "./ContentGroups.mjs";
 import { lockLineBreaks, restoreLockedLineBreaks, restoreLineBreakKinds } from "./LineBreaks.mjs";
 import { validateWithTargetedRecheck } from "./BatchRecheck.mjs";
 import { glossaryPattern } from "./GlossaryPatterns.mjs";
+import publishedGlossaries from "../../01 Translate Glossaries/Code/Shared/PublishedGlossary.cjs";
 import { renderGlossaryTableRow } from "./GlossaryTable.mjs";
 import { applyLanguagePostprocessors } from "./LanguagePostprocessors.mjs";
 import editorialRules from "../../Code/TranslationEditorialRules.cjs";
@@ -819,6 +820,12 @@ const protectedPartition = partitionProtectedGroups(groups, sourceValues, protec
 const glossary = readGlossary(jobDir, config, undefined, undefined, bookInstructions.glossarySourceTermExclusions);
 config.contextualGlossaryDefinitions = glossary.filter(entry => entry.contextual)
   .map(entry => ({ source: entry.source, alternatives: entry.alternatives }));
+if (config.publishedGlossary) {
+  const exclusions = new Set(bookInstructions.glossarySourceTermExclusions.map(term => term.toLocaleLowerCase("en-US")));
+  config.contextualGlossaryDefinitions.push(...publishedGlossaries.readContextualGlossary(
+    path.join(jobDir, "glossary", "contextual.json"), config.glossaryTermKey,
+  ).filter(entry => !exclusions.has(entry.source.toLocaleLowerCase("en-US"))));
+}
 const glossaryTableMap = readGlossaryTableMap(
   jobDir,
   config,
@@ -888,6 +895,7 @@ const planCore = {
   inputDataSha256: sha256Json(sourceValues),
   inputFileSha256: inputBeforeTranslationSha256,
   glossarySha256: sha256Json(glossary),
+  ...(config.publishedGlossary ? { contextualGlossarySha256: sha256Json(config.contextualGlossaryDefinitions), publishedGlossary: config.publishedGlossary } : {}),
   model: String(config.model || ""),
   modelPolicy: REQUIRED_MODEL_POLICY,
   modelResolutionSourceUrl: latestModelResolution.sourceUrl,

@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "glossaryContractVersion": 2,
+  "sheets": { "acronyms": "Acronyms", "words": "Words" },
+  "columns": ["English", "English Definition", "French", "French Definition", "German", "German Definition", "Portuguese", "Portuguese Definition", "Spanish", "Spanish Definition"],
+  "profiles": {
+    "French": { "language": "French", "termKey": "French", "definitionKey": "French Definition" },
+    "German": { "language": "German", "termKey": "German", "definitionKey": "German Definition" },
+    "Portuguese": { "language": "Portuguese", "termKey": "Portuguese", "definitionKey": "Portuguese Definition" },
+    "Spanish": { "language": "Spanish", "termKey": "Spanish", "definitionKey": "Spanish Definition" }
+  },
+  "books": {
+    "MFP": {
+      "family": "MFP",
+      "publishedSource": { "path": "01 Translate Glossaries/Published/Translation-Glossaries.json", "book": "MFP" },
+      "runtime": {
+        "acronyms": "01 Translate Glossaries/MFP/Runtime/acronyms.json",
+        "words": "01 Translate Glossaries/MFP/Runtime/words.json",
+        "contextual": "01 Translate Glossaries/MFP/Runtime/contextual.json"
+      },
+      "supportedProfiles": ["French", "German", "Portuguese", "Spanish"],
+      "defaultProfiles": { "French": "French" }
+    },
+    "FPST": {
+      "family": "FPST",
+      "publishedSource": { "path": "01 Translate Glossaries/Published/Translation-Glossaries.json", "book": "FPST" },
+      "runtime": {
+        "acronyms": "01 Translate Glossaries/FPST/Runtime/acronyms.json",
+        "words": "01 Translate Glossaries/FPST/Runtime/words.json",
+        "contextual": "01 Translate Glossaries/FPST/Runtime/contextual.json"
+      },
+      "supportedProfiles": ["French", "German", "Portuguese", "Spanish"],
+      "defaultProfiles": { "French": "French" }
+    }
+  }
+}

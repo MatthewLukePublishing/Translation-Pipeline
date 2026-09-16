@@ -50,7 +50,7 @@ test("maintained code never calls the dependency's vulnerable disk-extraction me
   }
 });
 
-test("the public commit contains only maintained source and synthetic examples", () => {
+test("the public commit contains only maintained source, examples and approved content snapshots", () => {
   const files = trackedFiles();
   assert.ok(files.length > 0, "No tracked files were found.");
   for (const relativePath of files) {

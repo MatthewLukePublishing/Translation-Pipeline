@@ -554,6 +554,7 @@ function buildDelimitedPrompt(scanPayload) {
   return [
     "You are translating all text loads from one Illustrator diagram in a single batch.",
     "The shared glossary applies to the entire diagram and is separate from the text items.",
+    "Contextual glossary entries describe alternative senses. Choose the sense from the English text and diagram context; never combine senses or add the explanatory definitions to the translation.",
     "Each item's text is the authoritative source to translate.",
     "Some glossary terms may already be pre-replaced into the target language inside item text.",
     "Do not translate pre-replaced glossary terms back into English or paraphrase them.",
@@ -581,7 +582,8 @@ function buildDelimitedPrompt(scanPayload) {
         "If an item is only a glossary term, return only the exact glossary target term.",
         "Some glossary terms may already appear in target-language form inside the item text. Keep them exactly."
       ],
-      shared_glossary: glossary
+      shared_glossary: glossary,
+      contextual_glossary: GLOSSARY_RESOURCES?.contextualGlossary || []
     }, null, 2),
     "<<<END_SHARED_GLOSSARY>>>",
     "",

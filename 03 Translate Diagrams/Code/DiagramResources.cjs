@@ -4,6 +4,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const fg = require("fast-glob");
 const XLSX = require("xlsx");
+const { assertFamilyCurrent } = require("../../01 Translate Glossaries/Code/Shared/Build_Glossary_Runtime.cjs");
+const { readContextualGlossary } = require("../../01 Translate Glossaries/Code/Shared/PublishedGlossary.cjs");
 
 const LANGUAGE_ALIASES = new Map([
   ["brazilian portuguese", "Portuguese"],
@@ -49,7 +51,7 @@ function resolveDefaultProfile(map, bookConfig, targetLanguage) {
 
   const profileMatches = Object.entries(map.profiles || {}).filter(([, profile]) => (
     normalizedKey(normalizeTargetLanguage(profile?.language)) === normalizedKey(normalizedLanguage)
-  ));
+  )).filter(([name]) => (bookConfig.supportedProfiles || []).some(supported => normalizedKey(supported) === normalizedKey(name)));
   if (profileMatches.length !== 1) {
     throw new Error(
       `Could not resolve one glossary profile for target language '${targetLanguage}'. ` +
@@ -96,6 +98,13 @@ function resolveDiagramGlossaryResources({
   }
 
   const runtime = bookEntry.value.runtime || {};
+  let contextualGlossary = [];
+  if (bookEntry.value.publishedSource) {
+    assertFamilyCurrent(map, bookEntry.value.family, bookEntry.value, resolvedProgramRoot);
+    contextualGlossary = readContextualGlossary(
+      path.resolve(resolvedProgramRoot, runtime.contextual), clean(profileEntry.value.termKey),
+    );
+  }
   const wordsJson = assertExistingFile(
     path.resolve(resolvedProgramRoot, clean(runtime.words)),
     `${bookEntry.name} word glossary JSON`,
@@ -149,6 +158,7 @@ function resolveDiagramGlossaryResources({
     wordsJson,
     acronymsJson,
     symbolsWorkbook,
+    contextualGlossary,
   };
 }
 

@@ -237,6 +237,13 @@ if ($bookConfig.originDiagrams) {
 }
 $acronymSource = Assert-PathWithin -Path (Join-Path $programRoot ([string]$bookConfig.runtime.acronyms)) -Parent $programRoot -Label 'Acronym glossary'
 $wordsSource = Assert-PathWithin -Path (Join-Path $programRoot ([string]$bookConfig.runtime.words)) -Parent $programRoot -Label 'Word glossary'
+$contextualGlossarySource = ''
+if ($bookConfig.publishedSource) {
+    $glossaryBuilder = Join-Path $programRoot '01 Translate Glossaries\Code\Shared\Build_Glossary_Runtime.cjs'
+    & $codexNode $glossaryBuilder --check --family ([string]$bookConfig.family)
+    if ($LASTEXITCODE -ne 0) { throw 'Published glossary runtime is missing or stale. Rebuild Stage 1 before preparing a new job.' }
+    $contextualGlossarySource = Assert-PathWithin -Path (Join-Path $programRoot ([string]$bookConfig.runtime.contextual)) -Parent $programRoot -Label 'Contextual glossary'
+}
 $translationInstructionsSource = ''
 $translationInstructionsModule = $null
 if ($bookConfig.translationInstructions) {
@@ -301,6 +308,9 @@ $icmlFiles = @(Get-ChildItem -LiteralPath $textFolder -Recurse -File | Where-Obj
 if (-not $icmlFiles.Count) { throw "No ICML files were extracted to $textFolder" }
 Copy-Item -LiteralPath $acronymSource -Destination (Join-Path $jobPath 'glossary\acronyms.json')
 Copy-Item -LiteralPath $wordsSource -Destination (Join-Path $jobPath 'glossary\words.json')
+if ($contextualGlossarySource) {
+    Copy-Item -LiteralPath $contextualGlossarySource -Destination (Join-Path $jobPath 'glossary\contextual.json')
+}
 Copy-Item -LiteralPath $originWorkbook -Destination (Join-Path $jobPath 'input\content_export.xlsx')
 if ($SourcePackagePath) {
     Copy-Item -LiteralPath (Join-Path $sourcePackageRoot 'source_package.json') -Destination (Join-Path $jobPath 'input\source_package.json')
@@ -386,6 +396,7 @@ $jobConfig = [ordered]@{
     subscriptionBatchMaxSegments = 300
     createdAt = $now
     glossarySources = [ordered]@{ acronyms = $acronymSource; words = $wordsSource }
+    publishedGlossary = if ($contextualGlossarySource) { (Read-JsonFile -Path (Join-Path $jobPath 'glossary\contextual.json') -Label 'Published glossary provenance').source } else { $null }
     originSources = [ordered]@{ document = $originDocument; contentWorkbook = $originWorkbook; icmlArchive = $originArchive; diagrams = $originDiagrams }
     productionWorkspace = [ordered]@{
         root = $workspaceRoot

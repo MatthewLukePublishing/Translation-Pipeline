@@ -71,20 +71,40 @@ function editorialPrompt(language, stage, expectedSha256) {
 
 // Protect literal syntax before any text-only typography operation. Caller-provided
 // strings protect book-specific names and exact glossary entries as well.
+const MASK_TOKEN = /\uE100(\d+)\uE101/gu;
 function outsideProtectedText(value, protectedStrings, transform) {
   const originals = [];
   const reserve = text => { const token = `\uE100${originals.length}\uE101`; originals.push(text); return token; };
-  let masked = String(value ?? "");
-  if (/[\uE100\uE101]/u.test(masked)) throw new Error("Reserved editorial masking characters in input.");
+  const input = String(value ?? "");
+  if (/[\uE100\uE101]/u.test(input)) throw new Error("Reserved editorial masking characters in input.");
+  // Even entries are unmasked text and odd entries are mask tokens. Protected
+  // strings search only unmasked text, so a digit-only string can never match a
+  // token's index. A part boundary satisfies the same lookarounds as the former
+  // private-use token neighbours: neither is a letter, number or underscore.
+  let parts = [input];
   for (const text of [...new Set(protectedStrings || [])].filter(Boolean).sort((a,b) => b.length-a.length)) {
     // A literal match requires a literal occurrence; skip absent strings cheaply.
-    if (typeof text === "string" && !masked.includes(text)) continue;
+    if (typeof text === "string" && !parts.some((part, index) => index % 2 === 0 && part.includes(text))) continue;
     const escaped=text.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
     const pattern=new RegExp(`(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])`,"gu");
-    masked = masked.replace(pattern, () => reserve(text));
+    const next = [];
+    for (let index = 0; index < parts.length; index++) {
+      const part = parts[index];
+      if (index % 2) { next.push(part); continue; }
+      let last = 0;
+      for (const match of part.matchAll(pattern)) {
+        next.push(part.slice(last, match.index), reserve(text));
+        last = match.index + match[0].length;
+      }
+      next.push(part.slice(last));
+    }
+    parts = next;
   }
-  masked = masked.replace(/<\?[\s\S]*?\?>|<\/?[A-Za-z][^>]*>|&(?:#\d+|#x[\da-fA-F]+|[A-Za-z]+);|(?:https?:\/\/|www\.)[^\s<>]+|[\w.+-]+@[\w.-]+\.[A-Za-z]+|⟦[^⟧]+⟧|__lock_[A-Za-z0-9_]+__/gu, reserve);
-  return transform(masked).replace(/\uE100(\d+)\uE101/gu, (_match,index) => originals[Number(index)]);
+  const masked = parts.join("").replace(/<\?[\s\S]*?\?>|<\/?[A-Za-z][^>]*>|&(?:#\d+|#x[\da-fA-F]+|[A-Za-z]+);|(?:https?:\/\/|www\.)[^\s<>]+|[\w.+-]+@[\w.-]+\.[A-Za-z]+|⟦[^⟧]+⟧|__lock_[A-Za-z0-9_]+__/gu, reserve);
+  // A literal-syntax original (such as a URL) can contain an earlier protected
+  // string's token. Restore nested tokens until none remain.
+  const restore = text => text.replace(MASK_TOKEN, (_match,index) => restore(originals[Number(index)]));
+  return restore(transform(masked));
 }
 
 const FRENCH_MONTHS = [

@@ -188,6 +188,14 @@ rules. The approved workbook is not silently rewritten for a style-boundary
 spacing correction: the report explicitly records the deterministic derivation
 and retains both the workbook hash and resulting ICML hashes.
 
+Import evidence also records `engineSha256`, the SHA-256 of `Code/IcmlGrep.cjs`.
+Validation and `IcmlGrepJob.mjs` accept the current engine hash or a hash in
+`EQUIVALENT_PRIOR_ENGINE_SHA256` (`IcmlGrepJob.mjs`); any other value invalidates
+the import. That list names only earlier engines proven to give byte-identical
+ICML, reports and errors on real job ICML. It currently holds the v1.6.0 engine,
+which the September 2026 performance revision superseded without changing output.
+New imports always record the current hash.
+
 Older imports require current QA and reimport to acquire this evidence. If native
 InDesign checkout/save has stripped Content IDs or changed the ICML, stop for
 reconciliation with the retained snapshot; never invent IDs or overwrite manual

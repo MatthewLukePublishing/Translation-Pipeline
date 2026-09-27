@@ -350,3 +350,61 @@ test("offline ICML import runs GREP across segments, preserves BOM, refuses lock
     assert.match(run("IcmlGrepJob.mjs").stderr,/ICML changed after import/);
   } finally { fs.rmSync(job,{recursive:true,force:true}); }
 });
+
+test("ICML GREP evidence accepts the current engine and listed equivalent prior engines only", async () => {
+  const jobModule = await import(pathToFileURL(path.join(ROOT, "02 Translate Text/Code/IcmlGrepJob.mjs")).href);
+  const current = jobModule.engineSha256();
+  const prior = "2EE2E561AE77A09BFA75A6A5D5BC5BF44F4C15DDF2A985FF2E002DA8AEB37AC5";
+  assert.equal(current, sha256(path.join(ROOT, "Code/IcmlGrep.cjs")));
+  assert.deepEqual([...jobModule.EQUIVALENT_PRIOR_ENGINE_SHA256], [prior]);
+  assert.ok(Object.isFrozen(jobModule.EQUIVALENT_PRIOR_ENGINE_SHA256));
+  assert.equal(jobModule.isAcceptedEngineSha256(current), true);
+  assert.equal(jobModule.isAcceptedEngineSha256(prior), true);
+  for (const unknown of ["0".repeat(64), prior.toLowerCase(), "", undefined, null, [prior]]) {
+    assert.equal(jobModule.isAcceptedEngineSha256(unknown), false);
+  }
+
+  const job = fs.mkdtempSync(path.join(os.tmpdir(), "translate-icml-engine-"));
+  try {
+    const { fnv1a32Utf16 } = await import(pathToFileURL(path.join(ROOT, "02 Translate Text/Code/ContentFingerprint.mjs")).href);
+    const workspace = path.join(job,"edition"), textFolder = path.join(workspace,"Text");
+    fs.mkdirSync(textFolder,{recursive:true});
+    const icml = path.join(textFolder,"story.icml");
+    const original = '<ParagraphStyleRange id="p1"><CharacterStyleRange><Content id="id-1">12 </Content></CharacterStyleRange><CharacterStyleRange><Content id="id-2">km</Content></CharacterStyleRange></ParagraphStyleRange>';
+    fs.writeFileSync(icml,original);
+    const headers = ["ParagraphStyleRange id", "ParagraphStyleRange content", "Content tag", "Content content"];
+    const output = path.join(job,"output/content_import.xlsx");
+    const rows = [headers,["p1","12 km","id-1","12 "],["","","id-2","km"]];
+    writeWorkbook(path.join(job,"input/content_export.xlsx"), rows);
+    writeWorkbook(output, rows);
+    fs.writeFileSync(path.join(job,"job_config.json"),JSON.stringify({jobId:"fixture",jobPath:job,book:"DEMO",targetLanguage:"French",paths:{outputWorkbook:output},productionWorkspace:{root:workspace,textFolder,documentPath:path.join(workspace,"book.indd")}}));
+    fs.writeFileSync(path.join(job,"job_manifest.json"),JSON.stringify({jobId:"fixture",status:"translated",workbook:{dataRowCount:2,contentIdCount:2},icmlFiles:[{path:icml,sha256:crypto.createHash("sha256").update(original).digest("hex").toUpperCase(),fingerprint:fnv1a32Utf16(original)}]}));
+    const run = name => spawnSync(process.execPath,[path.join(ROOT,"02 Translate Text/Code",name),"--job",job],{cwd:ROOT,encoding:"utf8",windowsHide:true});
+    assert.equal(run("Validation/Validate_Translation_Job.js").status,0);
+    const imported = run("Import_Translation_Workbook.mjs"); assert.equal(imported.status,0,imported.stderr);
+    const manifestFile = path.join(job,"job_manifest.json");
+    const manifest = JSON.parse(fs.readFileSync(manifestFile,"utf8"));
+    assert.equal(manifest.import.grep.engineSha256, current, "new imports record the current engine");
+    const withEngine = value => {
+      const next = structuredClone(manifest); next.import.grep.engineSha256 = value;
+      fs.writeFileSync(manifestFile,JSON.stringify(next));
+    };
+    for (const accepted of [current, prior]) {
+      withEngine(accepted);
+      const verified = run("IcmlGrepJob.mjs"); assert.equal(verified.status,0,verified.stderr);
+      const qa = run("Validation/Validate_Translation_Job.js"); assert.equal(qa.status,0,qa.stderr);
+      const after = JSON.parse(fs.readFileSync(manifestFile,"utf8"));
+      assert.equal(after.status,"imported","equivalent engine evidence keeps the import current");
+      assert.equal(after.import.grep.engineSha256,accepted);
+    }
+    withEngine("0".repeat(64));
+    const rejected = run("IcmlGrepJob.mjs");
+    assert.notEqual(rejected.status,0);
+    assert.match(rejected.stderr,/Current offline ICML GREP import evidence is missing/);
+    const invalidated = run("Validation/Validate_Translation_Job.js"); assert.equal(invalidated.status,0,invalidated.stderr);
+    const after = JSON.parse(fs.readFileSync(manifestFile,"utf8"));
+    assert.equal(after.status,"ready_for_import","an unknown engine hash invalidates the import");
+    assert.equal(after.import,undefined);
+    assert.equal(after.invalidatedImport.import.grep.engineSha256,"0".repeat(64));
+  } finally { fs.rmSync(job,{recursive:true,force:true}); }
+});

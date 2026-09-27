@@ -8,6 +8,17 @@ import { isStrictlyInside, pathsEqual } from "./PathSafety.mjs";
 
 export const hash = value => crypto.createHash("sha256").update(value).digest("hex").toUpperCase();
 export const engineSha256 = () => hash(fs.readFileSync(new URL("../../Code/IcmlGrep.cjs",import.meta.url)));
+// Earlier Code/IcmlGrep.cjs revisions proven to produce byte-identical ICML,
+// reports and errors to the current engine. Their recorded import evidence stays
+// valid; new imports always record engineSha256(). Add a hash here only with an
+// old-versus-new equivalence proof over real job ICML; every other value fails.
+export const EQUIVALENT_PRIOR_ENGINE_SHA256 = Object.freeze([
+  // v1.6.0 engine (commits 162db7e through 6b8714a), superseded by the
+  // output-identical performance revision of 2026-09-27.
+  "2EE2E561AE77A09BFA75A6A5D5BC5BF44F4C15DDF2A985FF2E002DA8AEB37AC5",
+]);
+export const isAcceptedEngineSha256 = value => typeof value === "string" &&
+  (value === engineSha256() || EQUIVALENT_PRIOR_ENGINE_SHA256.includes(value));
 const json = file => JSON.parse(fs.readFileSync(file,"utf8").replace(/^\uFEFF/u,""));
 
 export function assertNoIcmlLocks(config) {
@@ -45,7 +56,7 @@ export function verifyIcmlGrepJob(jobPath) {
   const imported = manifest.import, selected = policy.resolveGrepRules(config.targetLanguage);
   if (manifest.qa?.status !== "passed" || !manifest.qa.grepProtection ||
       imported?.grep?.method !== "offline_icml_grep" || imported.grep.status !== "passed" ||
-      imported.grep.policySha256 !== selected.sha256 || imported.grep.engineSha256 !== engineSha256()) throw Error("Current offline ICML GREP import evidence is missing; validate and import first.");
+      imported.grep.policySha256 !== selected.sha256 || !isAcceptedEngineSha256(imported.grep.engineSha256)) throw Error("Current offline ICML GREP import evidence is missing; validate and import first.");
   if (hash(fs.readFileSync(config.paths.outputWorkbook)) !== imported.workbookSha256 ||
       imported.workbookSha256 !== manifest.qa.hashes.outputWorkbookSha256) throw Error("Workbook changed since the accepted ICML GREP import.");
   if (imported.grep.protectionSha256 !== hash(JSON.stringify(manifest.qa.grepProtection))) throw Error("GREP protection policy changed since import.");

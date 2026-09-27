@@ -7,7 +7,7 @@ import fileUtilities from "../../../Code/FileUtilities.cjs";
 import textNormalization from "../../../Code/TextNormalization.cjs";
 import editorialRules from "../../../Code/TranslationEditorialRules.cjs";
 import grepRules from "../../../Code/TranslationGrepRules.cjs";
-import { engineSha256, hash as grepHash } from "../IcmlGrepJob.mjs";
+import { isAcceptedEngineSha256, hash as grepHash } from "../IcmlGrepJob.mjs";
 import transactionalFiles from "../../../Code/TransactionalFileReplacement.cjs";
 import { fnv1a32Utf16 } from "../ContentFingerprint.mjs";
 import { normalizeContentId } from "../ContentIds.mjs";
@@ -295,7 +295,7 @@ async function main() {
     const grep = manifest.import?.grep;
     if (grep?.status !== "passed" || grep.method !== "offline_icml_grep" ||
         grep.policySha256 !== grepRules.resolveGrepRules(config.targetLanguage).sha256 ||
-        grep.engineSha256 !== engineSha256()) importStillCurrent = false;
+        !isAcceptedEngineSha256(grep.engineSha256)) importStillCurrent = false;
   }
   if (!["translated", "ready_for_import", "qa_failed", "imported"].includes(manifestStatusBeforeQa)) {
     throw new Error(

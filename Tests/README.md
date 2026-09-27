@@ -20,7 +20,9 @@ unsupported nested tables.
 Editorial coverage includes stage-specific rules for ten languages, protected
 cross-reference caches, panel-only reference changes, complete offline ICML GREP
 coverage, cross-style text boundaries, tables, entities, byte-preserved metadata,
-lock refusal, BOM retention and hash-bound import verification. The optional
+lock refusal, BOM retention and hash-bound import verification. Import evidence
+accepts the current GREP engine hash and listed output-equivalent prior engines
+only. Digit-only protected strings cannot corrupt editorial masking. The optional
 native-GREP utility has separate safety mocks. Offline execution is never
 reported as native Adobe execution.
 

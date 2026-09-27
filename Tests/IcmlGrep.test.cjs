@@ -71,3 +71,25 @@ test("translation prompts and postprocessing apply final spacing before export, 
   assert.ok(launcher.includes('Code\\IcmlGrepJob.mjs'));
   assert.ok(!launcher.includes('Invoke-InDesignGrepRules.ps1'));
 });
+test("protected ranges follow earlier rule edits and reused protection lists stay exact",()=>{
+  // The em-dash rule creates the locked spelling; the later unit rule must see it.
+  const locked="km —\u202fb";
+  const result=transformText("12 km—b","French",{protectedStrings:[locked]});
+  assert.equal(result.text,"12 km —\u202fb");
+  assert.deepEqual(result.records.find(r=>r.ruleId==="unit_nbsp"),{ruleId:"unit_nbsp",matches:1,changes:0,excluded:1});
+  assert.equal(transformText("12 km—b","French").text,"12\u00a0km —\u202fb");
+  const xml=wrap(content("1","12 km")+content("2","—b"));
+  const options={protectedStrings:[locked]};
+  const locking=xml.replace(">—b<","> —\u202fb<");
+  assert.equal(applyIcmlGrep(xml,"French",options).text,locking);
+  assert.equal(applyIcmlGrep(xml,"French",options).text,locking);
+  const unlocked=locking.replace(">12 km<",">12\u00a0km<");
+  assert.equal(applyIcmlGrep(xml,"French",{protectedStrings:[]}).text,unlocked);
+  // A list changed in place is not answered from a previous file's protection.
+  options.protectedStrings[0]="unused";
+  assert.equal(applyIcmlGrep(xml,"French",options).text,unlocked);
+  options.protectedStrings[0]=locked;
+  assert.equal(applyIcmlGrep(xml,"French",options).text,locking);
+  // Non-string list entries keep their original, uncached failure.
+  assert.throws(()=>applyIcmlGrep(xml,"French",{protectedStrings:[locked,5]}),TypeError);
+});

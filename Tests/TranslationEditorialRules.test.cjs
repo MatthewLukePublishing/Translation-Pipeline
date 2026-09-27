@@ -87,6 +87,32 @@ test("typography normalization preserves syntax, protected names, attached calib
   assert.equal(rules.auditEditorialText(input,"French")[0].severity,"error");
 });
 
+test("digit-only protected strings never match internal masks or leak private-use characters",()=>{
+  const reserved=new RegExp(`[${String.fromCharCode(0xE100)}${String.fromCharCode(0xE101)}]`,"u");
+  // Longest-first masking gives "10" token index 0; "0" and "1" must not then
+  // match the digits inside that or any later token.
+  const cases=[
+    ["Voir 0 et 1 : test 10 %","French",["0","1","10"],"Voir 0 et 1 : test 10 %"],
+    ["Seite 0, 1 und 2: 5 %","German",["0","1","2","3"],"Seite 0, 1 und 2: 5 %"],
+    ["12 km 0 12","English",["12","0"],"12 km 0 12"],
+    // A protected literal inside other protected syntax is restored in full.
+    ["see http://x.test/Foo now: 5 %","French",["Foo"],"see http://x.test/Foo now : 5 %"],
+    ["⟦0⟧ 1 : 2","French",["0","1","2"],"⟦0⟧ 1 : 2"],
+  ];
+  for(const [input,language,protectedStrings,expected] of cases){
+    const output=rules.normalizeEditorialText(input,language,{protectedStrings});
+    assert.doesNotMatch(output,reserved);
+    assert.equal(output,expected);
+    assert.deepEqual(rules.auditEditorialText(expected,language,{protectedStrings}),[]);
+  }
+  // Many masks: every token index is itself a protected digit string.
+  const protectedStrings=Array.from({length:40},(_,index)=>String(index));
+  const input=protectedStrings.join(" ; ");
+  const output=rules.normalizeEditorialText(input,"French",{protectedStrings});
+  assert.doesNotMatch(output,reserved);
+  assert.equal(output,protectedStrings.join(" ; "));
+});
+
 test("French spacing and apostrophe policies do not leak into other languages",()=>{
   assert.equal(rules.normalizeEditorialText("Text: 5%", "English"),"Text: 5%");
   assert.equal(rules.normalizeEditorialText("Text: 5%", "German"),"Text: 5\u00A0%");

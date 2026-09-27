@@ -247,9 +247,10 @@ The canonical public repository is
 `https://github.com/MatthewLukePublishing/translation-pipeline`. After an
 authorized maintained source or documentation change—including every new
 executable or script—passes the relevant offline tests and Publishing
-consolidation, commit and push it to that repository in the same task. A change
-to distributed behavior must also receive a new version tag and stable GitHub
-release. Verify GitHub CI after pushing.
+consolidation, validate and commit the exact candidate locally. Do not push,
+tag, create a release, or otherwise publish to GitHub as an automatic
+completion step. Any GitHub action requires explicit per-action user
+authorization; if authorized, verify the resulting revision and CI.
 
 Never publish ignored inputs, generated translations, Adobe files, job records,
 credentials, authentication state, archives, or private production data. A

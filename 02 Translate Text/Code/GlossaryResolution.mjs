@@ -1,7 +1,17 @@
-import { glossaryPattern } from "./GlossaryPatterns.mjs";
+import { reusableGlossaryPattern } from "./GlossaryPatterns.mjs";
 
+// Rows are resolved against the same glossary repeatedly; folding is pure.
+const FOLDED_LIMIT = 10000;
+const foldedValues = new Map();
 function folded(value) {
-  return String(value ?? "").normalize("NFC").toLocaleLowerCase("en-US");
+  const text = String(value ?? "");
+  let result = foldedValues.get(text);
+  if (result === undefined) {
+    result = text.normalize("NFC").toLocaleLowerCase("en-US");
+    if (foldedValues.size >= FOLDED_LIMIT) foldedValues.clear();
+    foldedValues.set(text, result);
+  }
+  return result;
 }
 
 function sorted(entries) {
@@ -47,20 +57,56 @@ export function compileGlossaryEntries(rawEntries) {
   })));
 }
 
+const ASCII_TEXT = /^[\0-\x7F]*$/;
+const NON_ASCII_CHARACTER = /[^\0-\x7F]/gu;
+const FOLDS_ONTO_ASCII = /^[\0-\x7F]$/iu;
+const loweredAsciiSources = new Map();
+function loweredAsciiSource(source) {
+  let result = loweredAsciiSources.get(source);
+  if (result === undefined) {
+    result = ASCII_TEXT.test(source) ? source.toLowerCase() : null;
+    if (loweredAsciiSources.size >= FOLDED_LIMIT) loweredAsciiSources.clear();
+    loweredAsciiSources.set(source, result);
+  }
+  return result;
+}
+
+// Ask the regex engine itself whether any non-ASCII character in the text is
+// case-insensitively equivalent to an ASCII character (for example U+017F).
+function mayFoldOntoAscii(text) {
+  for (const [character] of text.matchAll(NON_ASCII_CHARACTER)) {
+    if (FOLDS_ONTO_ASCII.test(character)) return true;
+  }
+  return false;
+}
+
+// Prefilters only skip entries whose pattern cannot match; every candidate is
+// still decided by the same boundary pattern. An exact match is a literal
+// occurrence. Without characters that fold onto ASCII, a case-insensitive
+// match of an all-ASCII source is an ASCII run whose lowercase form occurs in
+// the lowercased text.
 function claimMatches(text, entries, caseSensitive, claimedSources) {
   let unclaimed = text;
   const matches = [];
+  const asciiPrefilter = !caseSensitive && !mayFoldOntoAscii(unclaimed);
+  let lowered = asciiPrefilter ? unclaimed.toLowerCase() : "";
   for (const entry of entries) {
     if (entry.contextual) continue;
     if (!caseSensitive && !entry.allowCaseInsensitiveFallback) continue;
     if (claimedSources.has(entry.source)) continue;
-    const pattern = glossaryPattern(entry.source, { caseSensitive });
-    pattern.lastIndex = 0;
+    if (caseSensitive) {
+      if (!unclaimed.includes(entry.source)) continue;
+    } else if (asciiPrefilter) {
+      const source = loweredAsciiSource(entry.source);
+      if (source !== null && !lowered.includes(source)) continue;
+    }
+    const pattern = reusableGlossaryPattern(entry.source, { caseSensitive });
     if (!pattern.test(unclaimed)) continue;
     matches.push({ entry, matchMode: caseSensitive ? "exact" : "case-insensitive-unique" });
     claimedSources.add(entry.source);
     pattern.lastIndex = 0;
     unclaimed = unclaimed.replace(pattern, (match) => " ".repeat(match.length));
+    if (asciiPrefilter) lowered = unclaimed.toLowerCase();
   }
   return { unclaimed, matches };
 }
@@ -76,10 +122,10 @@ export function resolveGlossaryEntriesForText(value, compiledEntries) {
 export function glossaryEntryApplies(value, entry) {
   if (entry.contextual) return false;
   const text = String(value ?? "");
-  const exact = glossaryPattern(entry.source, { caseSensitive: true });
+  const exact = reusableGlossaryPattern(entry.source, { caseSensitive: true });
   if (exact.test(text)) return true;
   if (!entry.allowCaseInsensitiveFallback) return false;
-  return glossaryPattern(entry.source, { caseSensitive: false }).test(text);
+  return reusableGlossaryPattern(entry.source, { caseSensitive: false }).test(text);
 }
 
 export function glossaryAmbiguities(compiledEntries) {

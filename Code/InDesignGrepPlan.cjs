@@ -6,11 +6,24 @@ function planGrep(audit,language){
   const stories=audit.stories,records=audit.records;
   if(!Array.isArray(stories) || !stories.length || stories.length>5000 || !Array.isArray(records) || new Set(stories.map(s=>String(s.id))).size!==stories.length)throw Error("Invalid story inventory.");
   const scopes=[],totals=[];
+  // Index RUN/MATCH records once by story and rule, in record order, instead of
+  // rescanning every record for each story and rule. Rule IDs match strictly.
+  const indexed={GREP_RUN:new Map(),GREP_MATCH:new Map()};
+  for(const r of records){
+    if(r.kind!=="GREP_RUN" && r.kind!=="GREP_MATCH")continue;
+    const key=String(r.storyId);
+    if(typeof r.ruleId!=="string")continue;
+    const byRule=indexed[r.kind].get(key) || new Map();
+    indexed[r.kind].set(key,byRule);
+    if(!byRule.has(r.ruleId))byRule.set(r.ruleId,[]);
+    byRule.get(r.ruleId).push(r);
+  }
+  const indexedRecords=(kind,story,rule)=>indexed[kind].get(String(story.id))?.get(rule.id) || [];
   for(const rule of policy.applicable){
     let matches=0,changes=0,excluded=0,noops=0;
     for(const story of stories){
-      const runs=records.filter(r=>r.kind==="GREP_RUN" && String(r.storyId)===String(story.id) && r.ruleId===rule.id);
-      const found=records.filter(r=>r.kind==="GREP_MATCH" && String(r.storyId)===String(story.id) && r.ruleId===rule.id);
+      const runs=indexedRecords("GREP_RUN",story,rule);
+      const found=indexedRecords("GREP_MATCH",story,rule);
       if(runs.length!==1 || Number(runs[0].matches)!==found.length)throw Error(`Incomplete native GREP run: ${rule.id}, story ${story.id}`);
       const expected=[];
       for(const row of found){

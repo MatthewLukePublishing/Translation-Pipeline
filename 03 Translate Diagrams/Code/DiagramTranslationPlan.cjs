@@ -22,7 +22,13 @@ function buildLedgerGlossary(words, acronyms, termKey) {
 }
 
 function matchesTerm(text, term) {
-  const escaped = String(term).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // Without the u flag, case-insensitive matching never maps a non-ASCII
+  // character onto ASCII, so an all-ASCII term can match only where the
+  // lowercased text contains it. Skip compiling a pattern that cannot match.
+  const source = String(term);
+  if (typeof text === "string" && /^[\0-\x7F]*$/.test(source) &&
+      !text.toLowerCase().includes(source.toLowerCase())) return false;
+  const escaped = source.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   // Match the Illustrator worker's glossary lookup exactly (not fuzzy matching).
   return new RegExp(`(^|[^A-Za-z0-9_])(${escaped})(?=$|[^A-Za-z0-9_])`, "gi").test(text);
 }

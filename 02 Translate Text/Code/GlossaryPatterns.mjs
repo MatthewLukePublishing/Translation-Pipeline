@@ -13,6 +13,26 @@ export function glossaryPattern(value, options = {}) {
   return new RegExp(`${left}${escaped}${right}`, flags);
 }
 
+// QA and lock preparation test the same glossary strings against every row.
+// A pattern depends only on its text and effective case mode, so reuse one
+// instance; lastIndex is reset on every lookup. Callers must not retain the
+// returned object across another lookup.
+const REUSABLE_PATTERN_LIMIT = 10000;
+const reusablePatterns = new Map();
+export function reusableGlossaryPattern(value, options = {}) {
+  const source = String(value ?? "");
+  const caseSensitive = options.caseSensitive ?? (source.length <= 4 && source === source.toUpperCase());
+  const key = `${caseSensitive ? "s" : "i"}\u0000${source}`;
+  let pattern = reusablePatterns.get(key);
+  if (!pattern) {
+    pattern = glossaryPattern(source, { caseSensitive });
+    if (reusablePatterns.size >= REUSABLE_PATTERN_LIMIT) reusablePatterns.clear();
+    reusablePatterns.set(key, pattern);
+  }
+  pattern.lastIndex = 0;
+  return pattern;
+}
+
 // Deliberately finite: do not accept arbitrary substrings (Zug in Zugang) or
 // arbitrary compound suffixes. This is terminology presence, not grammar QA.
 const GERMAN_NOUN_FORMS = new Map(Object.entries({
@@ -31,7 +51,7 @@ const GERMAN_NOUN_FORMS = new Map(Object.entries({
 // a one-word definition ending in -é may take regular gender/number agreement.
 // This is a terminology-presence check, not a substitute for grammatical review.
 export function containsGlossaryTarget(text, check, targetLanguage) {
-  if (glossaryPattern(check.target).test(String(text ?? ""))) return true;
+  if (reusableGlossaryPattern(check.target).test(String(text ?? ""))) return true;
   if (/^German$/i.test(String(targetLanguage))) {
     // An abbreviation may expand to this adjective, so permit its agreement
     // regardless of check.kind. No actual acronym receives suffix matching.
@@ -49,5 +69,5 @@ export function containsGlossaryTarget(text, check, targetLanguage) {
   if (!/^French$/i.test(String(targetLanguage)) || check.kind !== "definition"
       || !/^[\p{L}\p{M}]+é$/u.test(check.target)) return false;
   return ["e", "s", "es"].some(ending =>
-    glossaryPattern(`${check.target}${ending}`).test(String(text ?? "")));
+    reusableGlossaryPattern(`${check.target}${ending}`).test(String(text ?? "")));
 }

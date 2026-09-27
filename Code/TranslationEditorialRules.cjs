@@ -77,6 +77,8 @@ function outsideProtectedText(value, protectedStrings, transform) {
   let masked = String(value ?? "");
   if (/[\uE100\uE101]/u.test(masked)) throw new Error("Reserved editorial masking characters in input.");
   for (const text of [...new Set(protectedStrings || [])].filter(Boolean).sort((a,b) => b.length-a.length)) {
+    // A literal match requires a literal occurrence; skip absent strings cheaply.
+    if (typeof text === "string" && !masked.includes(text)) continue;
     const escaped=text.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
     const pattern=new RegExp(`(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])`,"gu");
     masked = masked.replace(pattern, () => reserve(text));
